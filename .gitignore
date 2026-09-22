@@ -1,0 +1,13 @@
+.venv/
+.check-venv/
+.tools/
+ui/node_modules/
+ui_dist/
+__pycache__/
+.pytest_cache/
+*.py[cod]
+*.log
+*.db
+*.db-*
+.env
+.env.*

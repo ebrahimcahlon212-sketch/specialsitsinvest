@@ -1,0 +1,2 @@
+# Keep saved documents and responses byte-for-byte for hash and citation checks.
+tests/fixtures/* -text
