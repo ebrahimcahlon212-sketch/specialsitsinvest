@@ -1,5 +1,7 @@
 # InvestResearch
 
+**Work in progress.** Features and checks are still being completed.
+
 InvestResearch is a Windows desktop app for researching US company spinoffs. It keeps filings, notes, calculations and decisions together on your computer.
 
 You can import a filing, search its text and open the source passage behind a quotation. The calculators cover spinoff valuations and fixed-price tender offers. Saved scenarios keep the assumptions used for each calculation.
