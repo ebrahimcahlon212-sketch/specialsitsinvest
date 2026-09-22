@@ -59,7 +59,7 @@ Summaries and deal terms require an installed Codex client and an existing ChatG
 
 Use **Settings > Check connection** before a request. Generation runs only when requested. The model process has broad read-only filesystem access; it is not isolated to a document folder. Supported optional tools and connectors are disabled, but universal prevention of tool execution has not been established.
 
-Extraction has been checked against saved fixtures. A fresh generation check for the latest changes and some Windows interactions remain pending. Document punctuation also needs further checking.
+Extraction has been checked against saved fixtures and a live Sandisk filing example. Two revised batches completed; the financial batch timed out, leaving its earlier saved results in place. Some Windows interactions and document punctuation still need checking.
 
 ## Development
 
