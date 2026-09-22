@@ -1,0 +1,17 @@
+<!doctype html>
+<html><head><title>Synthetic structural test</title><style>body { display:none }</style></head>
+<body>
+<h1>SYNTHETIC STRUCTURAL TEST DOCUMENT — not a filing</h1>
+<p>Alpha&nbsp; beta <strong>gamma</strong> delta.</p>
+<h2>First section</h2>
+<p>First context: repeated phrase.</p>
+<h2>Second section</h2>
+<p>Second context: repeated phrase.</p>
+<p onclick="alert('synthetic')"><a href="javascript:alert('synthetic')">Safe link text</a>
+<img src="https://invalid.example/synthetic" onerror="alert('synthetic')"></p>
+<script>window.pywebview.api.synthetic_forbidden_call()</script>
+<svg><script>synthetic_nested_script()</script></svg>
+<iframe src="https://invalid.example/synthetic">Synthetic iframe content</iframe>
+<table class="source-style"><thead><tr><th colspan="2" onclick="alert('synthetic')">Column context</th></tr></thead>
+<tbody><tr><td>Left cell</td><td>Right cell</td></tr></tbody></table>
+</body></html>
