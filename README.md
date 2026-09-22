@@ -12,7 +12,7 @@ Research is stored locally in SQLite and document files. The app does not place 
 
 ## Setup
 
-You need Windows, Microsoft Edge WebView2, Python and Node.js with npm. Python 3.13 is the project target. The current checks were run with Python 3.12; Python 3.13 compatibility is still unverified.
+You need Windows, Microsoft Edge WebView2, Python and Node.js with npm. Python 3.13 is the project target. The current checks were run with Python 3.12; Python 3.13 compatibility isn't unverified.
 
 Open PowerShell in the project folder. With Python 3.13 already installed:
 
