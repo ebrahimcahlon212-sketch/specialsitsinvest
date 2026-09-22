@@ -1,0 +1,5 @@
+pre { white-space: pre-wrap; overflow-wrap: anywhere; }
+.evidence { overflow-wrap: anywhere; line-height: 1.65; }
+.evidence table { border-collapse: collapse; display: block; overflow-x: auto; max-width: 100%; }
+.evidence th, .evidence td { border: 1px solid #ced4da; padding: 6px 10px; text-align: left; }
+.evidence mark { background: #fff3bf; color: #212529; }
