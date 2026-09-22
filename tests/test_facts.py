@@ -182,6 +182,70 @@ def test_saved_real_luna_facts_validate_unchanged_answers_and_full_source_quotes
     assert fixture_path.read_bytes() == original_fixture
 
 
+def test_saved_real_v3_facts_preserve_valid_quotes_unknowns_and_timed_out_batch(saved_december_fact_passages):
+    data, document, runs = saved_december_fact_passages
+    fixture_path = Path(__file__).parent / "fixtures" / "sandisk_20241220_luna_facts.json"
+    original_fixture = fixture_path.read_bytes()
+    actual = documents.read_document(data, document["id"])
+    checked, proposals = {}, {}
+    for run_id in (11, 12):
+        run = runs[run_id]
+        assert run["status"] == "completed" and run["response_text"]
+        request, source = json.loads(run["request_json"]), json.loads(run["source_json"])
+        assert request["prompt_version"] == "subscription-facts-3"
+        assert source["text_hash"] == actual["text_hash"]
+        assert source["original_sha256"] == actual["original_sha256"]
+        source["document_id"] = document["id"]
+        payload = json.loads(request["input_text"])
+        assert payload["retrieval_version"] == "fts-context-3"
+        payload["source"]["document_id"] = document["id"]
+        for passage in payload["passages"]:
+            passage["document_id"] = document["id"]
+        request["input_text"] = json.dumps(payload)
+        proposals.update({item["key"]: item for item in json.loads(run["response_text"])["facts"]})
+        checked.update({item["key"]: item for item in cases._checked_facts(data, request, source, run["response_text"])})
+    assert len(checked) == 16 and set(checked) == set(constants.FACT_BATCHES[0] + constants.FACT_BATCHES[1])
+    spinco, ratio, tax = (checked[key] for key in ("spinco_name", "distribution_ratio", "tax_free_condition"))
+    assert spinco["status"] == "extracted" and spinco["value"] == "Sandisk Corporation"
+    assert ratio["status"] == "extracted" and ratio["value"] == "one-third (1/3) of one share"
+    assert ratio["unit"] == "Spinco shares received per parent share"
+    assert ratio["qualifications"] == "Cash will be distributed in lieu of fractional shares"
+    assert any("qualifications" in entry["fields"] and ratio["qualifications"] in " ".join(entry["citation"]["quote"].split())
+               for entry in ratio["citations"])
+    assert tax["status"] == "extracted" and tax["value"] == "WDC receives the Tax Opinion from its tax counsel, Skadden"
+    assert "This condition may be waived by WDC in its sole discretion." in tax["qualifications"]
+    assert "It is a condition to the completion of the distribution" in " ".join(tax["citations"][0]["citation"]["quote"].split())
+    for key in ("record_date", "distribution_date"):
+        assert checked[key]["status"] == "unknown" and checked[key]["value"] is None
+        assert checked[key]["finding"] == "blank_placeholder"
+    for key in ("parent_name", "shares_outstanding_after", "pension_and_other_liabilities",
+                "cash_at_separation", "cash_payment_to_parent", "conditions_to_distribution", "management_equity_awards"):
+        assert checked[key]["status"] == "unknown" and checked[key]["value"] is None
+        assert proposals[key]["value"] is not None and "Validation:" in checked[key]["reason"]
+    for record in checked.values():
+        for entry in record["citations"]:
+            citation = entry["citation"]
+            assert citation["document_id"] == document["id"] == citation["text_version_id"]
+            assert citation["document_hash"] == actual["original_sha256"]
+            assert citation["quote"] == actual["canonical_text"][citation["start_offset"]:citation["end_offset"]]
+            opened = documents.read_citation(data, citation)
+            assert opened["citation"] == citation and "<mark>" in opened["html"]
+    timeout = runs[13]
+    assert timeout["status"] == "timed_out" and timeout["usage_uncertain"] == 1
+    assert timeout["response_text"] is None and timeout["usage_json"] is None
+    metadata = json.loads(timeout["metadata_json"])
+    assert metadata["runtime_context"]["deadline_seconds"] == 60
+    assert metadata["interrupt_requested"] is True and metadata["cancellation_confirmed"] is True
+    assert metadata["turn_status"] == "interrupted"
+    for run_id in (11, 12, 13):
+        metadata = json.loads(runs[run_id]["metadata_json"])
+        assert runs[run_id]["retry_count"] == 0 and metadata["retries"] == [] and metadata["tool_activity"] == []
+        assert metadata["runtime_context"]["application_retries"] == 0
+        assert metadata["auth"]["type"] == "chatgpt" and metadata["thread_settings"]["model"] == "gpt-5.6-luna"
+    assert not any(row["run_id"] == 13 for row in json.loads(original_fixture)["current_facts"])
+    assert fixture_path.read_bytes() == original_fixture
+
+
 @pytest.fixture(scope="module")
 def saved_december_fact_passages(tmp_path_factory):
     """Actual filing/passages, used for explicitly constructed structural proposals below."""

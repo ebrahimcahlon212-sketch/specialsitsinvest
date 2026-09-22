@@ -702,7 +702,7 @@ def facts_status(data_dir, case_id):
                 coverage.append({**{key:payload[key] for key in ('source','passages','searches','key_passages')},
                                  'run_id':run['id'],'prompt_version':request['prompt_version']})
                 if request['prompt_version'] != FACT_PROMPT_VERSION or payload.get('retrieval_version') != FACT_RETRIEVAL_VERSION:
-                    warnings.insert(0,'Saved deal terms use earlier extraction rules. They have been preserved; the revised extraction has not produced a new result yet.')
+                    warnings.insert(0,'Some saved deal terms use earlier extraction rules. Those results are retained until their revised batch completes.')
                 warnings.extend(payload.get('warnings',[]))
     with _summary_lock:
         job = dict(_fact_jobs.get((str(data_dir.resolve()),case_id),{}))
