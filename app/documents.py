@@ -528,6 +528,47 @@ def retrieve_question_passages(data_dir: Path, case_id: int, document_id: int, q
     return result
 
 
+def retrieve_summary_passages(data_dir: Path, case_id: int, document_id: int) -> dict:
+    """Opening context plus bounded full-text searches in one immutable source."""
+    limit = min(constants.SUMMARY_MAX_CHARS, constants.SUMMARY_DOCUMENT_CHARS)
+    with closing(db.connect(data_dir)) as connection:
+        row = connection.execute('SELECT canonical_text FROM documents WHERE id=? AND case_id=?',
+                                 (document_id, case_id)).fetchone()
+    if row is None or not row[0]:
+        raise ValueError('The selected document has no searchable text.')
+    text = row[0]
+    opening_end = min(len(text), limit, limit if len(text) <= limit else constants.SUMMARY_OPENING_CHARS)
+    if opening_end < len(text):
+        boundary = text.rfind('\n', opening_end * 4 // 5, opening_end)
+        if boundary > 0:
+            opening_end = boundary
+    queries = constants.SUMMARY_QUERIES if len(text) > limit else {}
+    budget = (limit - opening_end) // len(queries) if queries else 0
+    if not budget:
+        queries = {}
+    result = _retrieve_passages(data_dir, case_id, document_id, queries,
+                               {key: budget for key in queries}, 2)
+    opening = {'id': 1, 'document_id': document_id, 'start_offset': 0,
+               'end_offset': opening_end, 'text': text[:opening_end],
+               'heading': 'Opening context', 'partial': opening_end < len(text)}
+    passages = [opening] + [value for value in result['passages'] if value['end_offset'] > opening_end]
+    for identity, passage in enumerate(passages, 1):
+        passage['id'] = identity
+    if sum(len(value['text']) for value in passages) > limit:
+        raise ValueError('Retrieved briefing passages exceed the input allowance; no request was sent.')
+    result['passages'] = passages
+    result.pop('key_passages')
+    if len(text) <= limit:
+        result['warnings'] = ['The complete searchable text was supplied. Images and material absent from extracted text were not reviewed.']
+    else:
+        result['warnings'].append('Opening context and fixed searches can miss important material. Supplied character counts include any overlapping passages.')
+    if result['source']['cleaner_version'].startswith('pdf-'):
+        result['warnings'].append('PDF page labels are application locators. Text extraction can lose columns, tables and images; check financial figures against the original PDF.')
+        notices = re.findall(r'\[Extraction notice:[^\]]*\]', text)
+        result['warnings'].extend(dict.fromkeys(notices))
+    return result
+
+
 def _retrieve_passages(data_dir, case_id, document_id, queries, budgets, hit_limit, passage_limit=None):
     """Shared selected-version checks and canonical context for facts and questions."""
     with closing(db.connect(data_dir)) as connection:

@@ -9,9 +9,10 @@ from contextlib import closing
 from pathlib import Path
 from typing import Any, Literal
 
-from pydantic import BaseModel, ConfigDict, Field, ValidationError
+from pydantic import BaseModel, ConfigDict, Field, ValidationError, model_validator
 
-from app.constants import MAX_SAVED_TEXT, MODEL_NAME, QUESTION_MAX_CHARS
+from app.constants import (MAX_SAVED_TEXT, MODEL_NAME, QUESTION_MAX_CHARS,
+                           SUMMARY_MODEL_NAME, SUMMARY_MODEL_EFFORT, SUMMARY_DEADLINE_SECONDS)
 from app.db import DATA_LOCK, check_search, connect, initialize
 from app import cases
 from app.calc import Quantity
@@ -317,13 +318,32 @@ class AppStateResult(BaseModel):
 class SummarySourceInput(BaseModel):
     model_config = ConfigDict(extra="forbid", strict=True)
     case_id: int = Field(gt=0)
-    document_id: int = Field(gt=0)
+    document_id: int | None = Field(default=None, gt=0)
+    document_ids: list[int] | None = Field(default=None, max_length=6)
+
+    @model_validator(mode='after')
+    def validate_selection(self):
+        if (self.document_id is None) == (self.document_ids is None):
+            raise ValueError('Supply either document_id or document_ids.')
+        if self.document_ids is not None and (any(value <= 0 for value in self.document_ids)
+                                             or len(set(self.document_ids)) != len(self.document_ids)):
+            raise ValueError('Select distinct saved document versions with positive IDs.')
+        return self
 
 
 class SummaryEvidenceInput(BaseModel):
     model_config = ConfigDict(extra="forbid", strict=True)
     summary_id: int = Field(gt=0)
-    index: int = Field(ge=0, le=12)
+    index: int = Field(ge=0, le=24)
+
+
+class SummaryPassage(BaseModel):
+    id: int
+    start_offset: int
+    end_offset: int
+    heading: str | None
+    text: str
+    partial: bool
 
 
 class SummarySource(BaseModel):
@@ -335,6 +355,12 @@ class SummarySource(BaseModel):
     start_offset: int
     end_offset: int
     total_chars: int
+    filing_date: str | None = None
+    form_type: str | None = None
+    source_url: str | None = None
+    supplied_chars: int | None = None
+    passages: list[SummaryPassage] = Field(default_factory=list)
+    warnings: list[str] = Field(default_factory=list)
 
 
 class SummaryStatement(BaseModel):
@@ -343,6 +369,7 @@ class SummaryStatement(BaseModel):
     citation: Citation | None
     status: Literal['quote matched', 'unresolved', 'assumption']
     detail: str | None
+    ai_comment: str | None = None
 
 
 class SummarySentence(BaseModel):
@@ -352,6 +379,7 @@ class SummarySentence(BaseModel):
     citation: Citation | None
     status: Literal['quote matched', 'unresolved', 'assumption']
     detail: str | None
+    ai_comment: str | None = None
 
 
 class SummaryRecord(BaseModel):
@@ -367,6 +395,9 @@ class SummaryRecord(BaseModel):
     stale: bool
     stale_reasons: list[str]
     usage: dict[str, Any] | None
+    sources: list[SummarySource] = Field(default_factory=list)
+    warnings: list[str] = Field(default_factory=list)
+    effort: str | None = None
 
 
 class ModelRun(BaseModel):
@@ -382,7 +413,13 @@ class ModelRun(BaseModel):
 
 class SummaryStateResult(BaseModel):
     selected_document_id: int | None = None
+    selected_document_ids: list[int] = Field(default_factory=list)
     source: SummarySource | None = None
+    sources: list[SummarySource] = Field(default_factory=list)
+    warnings: list[str] = Field(default_factory=list)
+    model: str = SUMMARY_MODEL_NAME
+    effort: str = SUMMARY_MODEL_EFFORT
+    deadline_seconds: int = SUMMARY_DEADLINE_SECONDS
     summary: SummaryRecord | None = None
     runs: list[ModelRun] = Field(default_factory=list)
     active: bool = False
@@ -398,6 +435,7 @@ class SubscriptionStateResult(BaseModel):
     plan_type: str | None = None
     available: bool | None = None
     model: str = MODEL_NAME
+    effort: str | None = None
     usage: dict[str, Any] | None = None
     error: str | None = None
 
@@ -649,14 +687,16 @@ class Bridge:
     def set_summary_source(self, request: dict) -> dict:
         try:
             value = SummarySourceInput.model_validate(request)
-            return SummaryStateResult(**cases.set_summary_source(self._data_dir, **value.model_dump())).model_dump()
+            selection = value.document_ids if value.document_ids is not None else value.document_id
+            return SummaryStateResult(**cases.set_summary_source(self._data_dir, value.case_id, selection)).model_dump()
         except Exception as error:
             return SummaryStateResult(error=_failure(error, 'Select summary source')).model_dump()
 
     def generate_summary(self, request: dict) -> dict:
         try:
             value = SummarySourceInput.model_validate(request)
-            return SummaryStateResult(**cases.generate_summary(self._data_dir, **value.model_dump())).model_dump()
+            selection = value.document_ids if value.document_ids is not None else value.document_id
+            return SummaryStateResult(**cases.generate_summary(self._data_dir, value.case_id, selection)).model_dump()
         except Exception as error:
             return SummaryStateResult(error=_failure(error, 'Generate summary')).model_dump()
 

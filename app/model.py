@@ -28,15 +28,26 @@ def _home():
     return Path(os.environ.get('CODEX_HOME', str(Path.home() / '.codex'))).resolve()
 
 
-def _settings():
+def _target(model_name, effort):
+    if (model_name, effort) == (constants.MODEL_NAME, constants.MODEL_EFFORT):
+        return constants.MODEL_DEADLINE_SECONDS
+    if (model_name, effort) == (constants.SUMMARY_MODEL_NAME, constants.SUMMARY_MODEL_EFFORT):
+        return constants.SUMMARY_DEADLINE_SECONDS
+    raise ValueError('This model and reasoning pair is not enabled. No substitute was selected.')
+
+
+def _settings(model_name=None, effort=None):
+    model_name = constants.MODEL_NAME if model_name is None else model_name
+    effort = constants.MODEL_EFFORT if effort is None else effort
+    _target(model_name, effort)
     settings = {
         'forced_login_method': 'chatgpt', 'model_provider': 'openai',
         'web_search': 'disabled', 'agents.enabled': False, 'apps._default.enabled': False,
         'analytics.enabled': False, 'feedback.enabled': False, 'history.persistence': 'none',
         'project_doc_max_bytes': 0, 'approval_policy': 'never', 'approvals_reviewer': 'user',
         'allow_login_shell': False, 'default_permissions': 'ir_readonly',
-        'shell_environment_policy.inherit': 'none', 'model': constants.MODEL_NAME,
-        'model_reasoning_effort': constants.MODEL_EFFORT, 'model_reasoning_summary': 'none',
+        'shell_environment_policy.inherit': 'none', 'model': model_name,
+        'model_reasoning_effort': effort, 'model_reasoning_summary': 'none',
     }
     settings.update({'features.' + name: False for name in constants.CODEX_DISABLED_FEATURES})
     config_file = _home() / 'config.toml'
@@ -51,8 +62,11 @@ def _settings():
     return settings
 
 
-def runtime_context():
+def runtime_context(model_name=None, effort=None):
     """Cache identity without reading authentication files or saving config contents."""
+    model_name = constants.MODEL_NAME if model_name is None else model_name
+    effort = constants.MODEL_EFFORT if effort is None else effort
+    generation_seconds = _target(model_name, effort)
     binary = constants.CODEX_BINARY
     if not binary.is_file():
         raise ValueError('The verified Codex runtime is missing. No replacement was selected.')
@@ -69,9 +83,9 @@ def runtime_context():
     inputs = {str(path.resolve()): hashlib.sha256(path.read_bytes()).hexdigest() if path.is_file() else None
               for path in files}
     context = {'version': constants.CODEX_VERSION, 'runtime_sha256': digest,
-               'settings_sha256': _hash(_settings()), 'configuration_files': inputs,
+               'settings_sha256': _hash(_settings(model_name, effort)), 'configuration_files': inputs,
                'read_access': 'broad', 'writes': 'denied', 'environments': [],
-               'deadline_seconds': constants.MODEL_DEADLINE_SECONDS, 'application_retries': 0}
+               'deadline_seconds': generation_seconds, 'application_retries': 0}
     context['fingerprint'] = _hash(context)
     return context
 
@@ -255,13 +269,16 @@ async def _session(data_dir, request, cancel_event, progress):
         try:
             if cancel_event.is_set():
                 raise asyncio.CancelledError
-            context = runtime_context()
+            model_name, effort = ((request.get('model'), request.get('effort')) if request else
+                                 (constants.SUMMARY_MODEL_NAME, constants.SUMMARY_MODEL_EFFORT))
+            generation_seconds = _target(model_name, effort)
+            status.update(model=model_name, effort=effort)
+            context = runtime_context(model_name, effort)
             meta['runtime_context'] = context
-            if request and (request.get('model') != constants.MODEL_NAME or request.get('effort') != constants.MODEL_EFFORT):
-                raise ValueError('Only the verified Luna model with low reasoning is enabled.')
+            meta.update(model=model_name, effort=effort, deadline_seconds=generation_seconds)
             if request and request.get('runtime_context', {}).get('fingerprint') != context['fingerprint']:
                 raise ValueError('Codex configuration changed after this request was prepared. Prepare it again.')
-            settings = _settings()
+            settings = _settings(model_name, effort)
             report('Checking the ChatGPT subscription and read-only configuration.')
             proc = await asyncio.wait_for(asyncio.create_subprocess_exec(
                 str(constants.CODEX_BINARY), 'app-server', '--listen', 'stdio://', *_arguments(settings, work),
@@ -282,8 +299,8 @@ async def _session(data_dir, request, cancel_event, progress):
             meta['auth'] = {'type': status['auth_type'], 'plan': status['plan']}
             meta['allowance_before'] = status['allowance']
             available = await rpc('model/list', {'limit': 100, 'includeHidden': True})
-            selected = next((value for value in available.get('data', []) if value.get('model') == constants.MODEL_NAME), None)
-            status['model_available'] = bool(selected and any(value.get('reasoningEffort') == constants.MODEL_EFFORT
+            selected = next((value for value in available.get('data', []) if value.get('model') == model_name), None)
+            status['model_available'] = bool(selected and any(value.get('reasoningEffort') == effort
                                                             for value in selected.get('supportedReasoningEfforts', [])))
             config_reply = await rpc('config/read', {'includeLayers': True})
             _check_config(config_reply.get('config') or {}, settings)
@@ -300,14 +317,14 @@ async def _session(data_dir, request, cancel_event, progress):
             if status['allowance'].get('ordinaryUsageAllowed') is not True:
                 raise ValueError('Included subscription allowance is not confirmed. No request or paid fallback was made.')
             if not status['model_available']:
-                raise ValueError('Luna with low reasoning is unavailable. No substitute was selected.')
+                raise ValueError(f'{model_name} with {effort} reasoning is unavailable. No substitute was selected.')
             start = await rpc('thread/start', {
-                'model': constants.MODEL_NAME, 'modelProvider': 'openai', 'allowProviderModelFallback': False,
+                'model': model_name, 'modelProvider': 'openai', 'allowProviderModelFallback': False,
                 'ephemeral': True, 'cwd': str(work), 'permissions': 'ir_readonly', 'approvalPolicy': 'never',
                 'approvalsReviewer': 'user', 'environments': [], 'dynamicTools': [], 'selectedCapabilityRoots': [],
                 'baseInstructions': request['prompt'], 'developerInstructions': request['prompt']})
             thread_id = start['thread']['id']
-            if start.get('model') != constants.MODEL_NAME or start.get('modelProvider') != 'openai':
+            if start.get('model') != model_name or start.get('modelProvider') != 'openai':
                 raise ValueError('Model or provider substitution was rejected before submission.')
             if start.get('approvalPolicy') != 'never' or start.get('approvalsReviewer') != 'user':
                 raise ValueError('Automatic approval review was not disabled.')
@@ -326,13 +343,13 @@ async def _session(data_dir, request, cancel_event, progress):
             if cancel_event.is_set():
                 raise asyncio.CancelledError
             # Persist intent before bytes can leave. A lost reply is not permission to retry.
-            report('Submitting one Luna document-analysis request.', submitted=True)
+            report(f'Submitting one {model_name} document-analysis request with {effort} reasoning.', submitted=True)
             if cancel_event.is_set():
                 raise asyncio.CancelledError
             result['submitted'] = True
             started = time.monotonic()
-            deadline = started + constants.MODEL_DEADLINE_SECONDS
-            turn = await rpc('turn/start', {'threadId': thread_id, 'model': constants.MODEL_NAME, 'effort': constants.MODEL_EFFORT,
+            deadline = started + generation_seconds
+            turn = await rpc('turn/start', {'threadId': thread_id, 'model': model_name, 'effort': effort,
                 'environments': [], 'permissions': 'ir_readonly', 'approvalPolicy': 'never', 'approvalsReviewer': 'user',
                 'serviceTierForTurn': 'default', 'summary': 'none',
                 'input': [{'type': 'text', 'text': request['input_text']}], 'outputSchema': request['output_schema']})

@@ -24,6 +24,21 @@ CODEX_VERSION = '0.155.0-alpha.16'
 CODEX_SHA256 = '97d4d67419d0ac2f71342f9a5e850f9468aa622618de8ea823223edb9a91926a'
 MODEL_NAME = 'gpt-5.6-luna'
 MODEL_EFFORT = 'low'
+SUMMARY_MODEL_NAME = 'gpt-6-sol'
+SUMMARY_MODEL_EFFORT = 'high'
+SUMMARY_DEADLINE_SECONDS = 180
+SUMMARY_MAX_DOCUMENTS = 6
+SUMMARY_OPENING_CHARS = 8000
+SUMMARY_DOCUMENT_CHARS = 40000
+SUMMARY_RETRIEVAL_VERSION = 'briefing-fts-1'
+SUMMARY_QUERIES = {
+    'business': ('"our business"', '"customers"', '"subscription"', '"segments"'),
+    'event': ('"completed"', '"distribution"', '"separation"'),
+    'performance': ('"revenue"', '"operating profit"', '"cash flows"', '"outlook"'),
+    'capital': ('"debt"', '"interest expense"', '"dividend"'),
+    'conditions': ('"tax matters"', '"transition services"', '"conditions"'),
+    'risks': ('"risk factors"', '"competition"', '"depend"'),
+}
 PDF_MAX_PAGES = 500
 PDF_MAX_STREAM_BYTES = 20 * 1024 * 1024
 PDF_MIN_PAGE_CHARS = 40

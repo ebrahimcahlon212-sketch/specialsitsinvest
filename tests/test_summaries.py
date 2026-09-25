@@ -28,11 +28,12 @@ def synthetic_response():
     return {
         "is_spinoff": "yes",
         "reasoning": {"text": "Synthetic classification explanation.",
-                      "quote": EVENT_QUOTE, "status": "sourced"},
+                      "quote": EVENT_QUOTE, "status": "sourced", "passage_id": 1, "ai_comment": None},
         "sentences": [
             {"section": section, "text": f"Synthetic {section} statement.",
              "quote": COMPANY_QUOTE if section == "company" else None,
-             "status": "sourced" if section == "company" else "unresolved"}
+             "status": "sourced" if section == "company" else "unresolved",
+             "passage_id": 1 if section == "company" else None, "ai_comment": None}
             for section in SECTIONS
         ],
     }
@@ -63,6 +64,26 @@ def test_saved_real_luna_summary_structure_and_quotes_match_exact_supplied_excer
         assert " ".join(citation["quote"].split()) == " ".join(item["quote"].split())
 
 
+def test_saved_real_sol_mbgl_briefing_quotes_match_only_their_supplied_passages():
+    fixture = json.loads((Path(__file__).parent / "fixtures" / "mbgl_20260923_sol_briefing.json").read_text(encoding="utf-8"))
+    output = prompts.BriefingOutput.model_validate(fixture["response"]).model_dump()
+    assert fixture["model"] == "gpt-6-sol"
+    passages = {item["id"]: item for item in fixture["passages"]}
+    assert {item["document_id"] for item in fixture["sources"]} == {35, 49, 69, 75}
+    assert {item["document_id"] for item in passages.values()} <= {35, 49, 69, 75}
+    claims = [output["reasoning"], *output["sentences"]]
+    assert sum(item["status"] == "sourced" for item in claims) == 22
+    assert sum(item["status"] == "unresolved" for item in claims) == 3
+    for item in claims:
+        if item["status"] != "sourced":
+            assert item["quote"] is None and item["passage_id"] is None
+            continue
+        passage = passages[item["passage_id"]]
+        assert len(passage["text"]) == passage["end_offset"] - passage["start_offset"]
+        start, end = documents.match_quote(passage["text"], item["quote"])
+        assert " ".join(passage["text"][start:end].split()) == " ".join(item["quote"].split())
+
+
 @pytest.fixture(scope="module")
 def saved_filing(tmp_path_factory):
     template = tmp_path_factory.mktemp("summary-template")
@@ -91,16 +112,16 @@ def research(saved_filing, tmp_path, monkeypatch):
         progress("Synthetic request submitted.", submitted=True)
         return copy.deepcopy(response)
 
-    monkeypatch.setattr(model, "runtime_context", lambda: copy.deepcopy(context))
+    monkeypatch.setattr(model, "runtime_context", lambda *args: copy.deepcopy(context))
     monkeypatch.setattr(model, "generate", generate)
     monkeypatch.setattr(worker, "submit", lambda function, *args: queued.append((function, args)))
     return {"data": data, "case": case, "document": document, "queued": queued,
             "calls": calls, "context": context, "response": response}
 
 
-def finish(research):
+def finish(research, document_ids=None):
     data, case_id = research["data"], research["case"]["id"]
-    cases.generate_summary(data, case_id, research["document"]["id"])
+    cases.generate_summary(data, case_id, research["document"]["id"] if document_ids is None else document_ids)
     assert len(research["queued"]) == 1
     function, arguments = research["queued"].pop()
     function(*arguments)
@@ -136,7 +157,7 @@ def test_completed_summary_saved_quotes_reopen_and_unchanged_request_reuses_cach
     assert cases.list_cases(research["data"])[0]["question"] == research["case"]["question"]
 
 
-@pytest.mark.parametrize("change", ["question", "prompt", "runtime"])
+@pytest.mark.parametrize("change", ["question", "prompt", "prompt_text", "runtime", "model", "effort", "retrieval"])
 def test_effective_request_changes_prevent_cache_reuse(research, monkeypatch, change):
     first = finish(research)["summary"]
     case = research["case"]
@@ -144,6 +165,17 @@ def test_effective_request_changes_prevent_cache_reuse(research, monkeypatch, ch
         cases.update_case(research["data"], case["id"], case["title"], "Changed synthetic owner question.", case["status"])
     elif change == "prompt":
         monkeypatch.setattr(prompts, "SUMMARY_PROMPT_VERSION", "synthetic-next-prompt")
+    elif change == "prompt_text":
+        monkeypatch.setattr(prompts, "SUMMARY_PROMPT", prompts.SUMMARY_PROMPT + "\nSynthetic changed instructions.")
+    elif change in ("model", "effort", "retrieval"):
+        field, value = {"model": ("SUMMARY_MODEL_NAME", "synthetic-other-model"),
+                        "effort": ("SUMMARY_MODEL_EFFORT", "synthetic-other-effort"),
+                        "retrieval": ("SUMMARY_RETRIEVAL_VERSION", "synthetic-next-retrieval")}[change]
+        monkeypatch.setattr(constants, field, value)
+        saved = cases.summary_status(research["data"], case["id"])["summary"]
+        assert saved["stale"]
+        if change == "retrieval":
+            assert any("passage-selection rules" in reason for reason in saved["stale_reasons"])
     else:
         research["context"]["config_hash"] = "c" * 64
     second = finish(research)["summary"]
@@ -196,7 +228,7 @@ def test_new_document_and_changed_selection_mark_summary_stale_preserving_old_ev
 
 def test_saved_summary_and_citation_remain_available_without_runtime(research, monkeypatch):
     summary = finish(research)["summary"]
-    def unavailable():
+    def unavailable(*args):
         raise FileNotFoundError("Synthetic unavailable Codex runtime.")
     monkeypatch.setattr(model, "runtime_context", unavailable)
     assert cases.summary_status(research["data"], research["case"]["id"])["summary"]["id"] == summary["id"]
@@ -205,12 +237,12 @@ def test_saved_summary_and_citation_remain_available_without_runtime(research, m
 
 def test_unusable_current_source_preserves_saved_summary_and_its_quotation(research, monkeypatch):
     summary = finish(research)["summary"]
-    original = cases._source
+    original = cases._summary_sources
     def failed_current_source(connection, case_id, document_id=None):
         if document_id is None:
             raise ValueError("Synthetic newer source has no usable text.")
         return original(connection, case_id, document_id)
-    monkeypatch.setattr(cases, "_source", failed_current_source)
+    monkeypatch.setattr(cases, "_summary_sources", failed_current_source)
     state = cases.summary_status(research["data"], research["case"]["id"])
     assert state["summary"]["id"] == summary["id"] and state["summary"]["stale"]
     assert state["source"] is None and "no usable text" in state["error"]
@@ -241,7 +273,7 @@ def test_completed_summary_run_and_quotation_survive_isolated_backup_restore(res
         assert connection.execute("SELECT count(*) FROM model_runs WHERE status = 'completed'").fetchone()[0] == 1
 
 
-@pytest.mark.parametrize("invalid", ["not-json", "missing-section", "extra-field", "bad-status"])
+@pytest.mark.parametrize("invalid", ["not-json", "missing-section", "extra-field", "bad-status", "empty-sourced-quote"])
 def test_invalid_structured_output_does_not_create_summary_or_cache_success(research, invalid):
     response = synthetic_response()
     if invalid == "missing-section":
@@ -250,6 +282,8 @@ def test_invalid_structured_output_does_not_create_summary_or_cache_success(rese
         response["guaranteed_return"] = "Synthetic forbidden extra field"
     elif invalid == "bad-status":
         response["sentences"][0]["status"] = "human checked"
+    elif invalid == "empty-sourced-quote":
+        response["sentences"][0]["quote"] = ""
     research["response"]["response_text"] = "not JSON" if invalid == "not-json" else json.dumps(response)
     finish(research)
     assert rows(research, "summaries") == []
@@ -259,7 +293,7 @@ def test_invalid_structured_output_does_not_create_summary_or_cache_success(rese
     assert cases.summary_status(research["data"], research["case"]["id"])["summary"] is None
 
 
-@pytest.mark.parametrize("quote", ["Table of Contents", "This synthetic quotation does not occur.", ""])
+@pytest.mark.parametrize("quote", ["Table of Contents", "This synthetic quotation does not occur."])
 def test_ambiguous_missing_or_empty_quotes_remain_unresolved(research, quote):
     response = synthetic_response()
     response["sentences"][0]["quote"] = quote
@@ -291,6 +325,113 @@ def test_quote_after_supplied_portion_cannot_become_verified(research, monkeypat
     assert summary["sentences"][0]["status"] == "unresolved"
     assert summary["sentences"][0]["citation"] is None
     assert summary["reasoning"]["citation"]["end_offset"] <= 400
+
+
+@pytest.mark.parametrize("binding", ["correct", "wrong-document", "unsupplied-passage"])
+def test_multi_document_quotes_bind_to_only_the_named_supplied_passage(research, binding):
+    data, case_id = research["data"], research["case"]["id"]
+    quote = "Clearly synthetic second document supplies this distinct event description."
+    other = documents.store_document(data, case_id, quote.encode(), "Synthetic second source", "text/plain")
+    identities = [research["document"]["id"], other["id"]]
+    request, _, snapshot = cases.prepare_summary(data, case_id, identities)
+    passage = next(item for item in snapshot["retrieval"]["passages"] if item["document_id"] == other["id"])
+    response = synthetic_response()
+    response["sentences"][1].update(quote=quote, status="sourced", ai_comment="Synthetic interpretation of this evidence.",
+        passage_id=passage["id"] if binding == "correct" else 1 if binding == "wrong-document" else 999999)
+    research["response"]["response_text"] = json.dumps(response)
+    summary = finish(research, identities)["summary"]
+    assert {source["document_id"] for source in summary["sources"]} == set(identities)
+    assert research["calls"][0] == request
+    item = summary["sentences"][1]
+    if binding == "correct":
+        assert item["status"] == "quote matched" and item["ai_comment"] == response["sentences"][1]["ai_comment"]
+        opened = cases.read_summary_evidence(data, summary["id"], 2)
+        assert opened["citation"]["document_id"] == opened["citation"]["text_version_id"] == other["id"]
+        assert opened["citation"]["document_hash"] == other["original_sha256"]
+        assert opened["canonical_text"][opened["citation"]["start_offset"]:opened["citation"]["end_offset"]] == quote
+        original = rows(research, "summaries")
+        assert finish(research, list(reversed(identities)))["summary"]["id"] == summary["id"]
+        assert len(research["calls"]) == 1 and rows(research, "summaries") == original
+    else:
+        assert item["status"] == "unresolved" and item["citation"] is None and item["ai_comment"] is None
+        with pytest.raises(ValueError, match="no verified"):
+            cases.read_summary_evidence(data, summary["id"], 2)
+    assert json.loads(rows(research, "model_runs")[0]["response_text"]) == response
+
+
+def test_two_versions_of_same_logical_document_cannot_be_combined(research):
+    summary = finish(research)["summary"]
+    data, case_id, first = research["data"], research["case"]["id"], research["document"]
+    old_evidence = cases.read_summary_evidence(data, summary["id"], 0)
+    revised = documents.store_document(data, case_id, b"Clearly synthetic revised document version.",
+        "Synthetic revised source", "text/html", logical_document_id=first["logical_document_id"])
+    for action in (cases.set_summary_source, cases.generate_summary):
+        with pytest.raises(ValueError, match="one version"):
+            action(data, case_id, [first["id"], revised["id"]])
+    assert not research["queued"] and len(research["calls"]) == 1
+    assert cases.summary_status(data, case_id)["summary"]["stale"]
+    assert cases.read_summary_evidence(data, summary["id"], 0) == old_evidence
+
+
+def test_failed_quote_removes_ai_comment_but_preserves_original_response(research):
+    response = synthetic_response()
+    response["sentences"][0].update(quote="Clearly synthetic absent quotation.",
+                                   ai_comment="Synthetic interpretation that must not be promoted.")
+    research["response"]["response_text"] = json.dumps(response)
+    summary = finish(research)["summary"]
+    item = summary["sentences"][0]
+    assert item["status"] == "unresolved" and item["citation"] is None and item["ai_comment"] is None
+    assert json.loads(rows(research, "model_runs")[0]["response_text"]) == response
+
+
+@pytest.mark.parametrize("quote", ["no OCR was performed.", "Page 1", "1"])
+def test_pdf_generated_notice_and_locator_substrings_are_not_issuer_evidence(research, quote):
+    # Synthetic extracted-PDF markup tests citation boundaries, not PDF parsing.
+    markup = (b"<p>[Extraction notice: Text extraction only; no OCR was performed.]</p>"
+              b"<h2>Page 1</h2><p>Clearly synthetic source text follows the application locator.</p>")
+    saved = documents.store_document(research["data"], research["case"]["id"], markup,
+        "Synthetic extracted PDF structure", "text/html", cleaner_version="pdf-synthetic-boundary-test")
+    text = documents.read_document(research["data"], saved["id"])["canonical_text"]
+    start, end = documents.match_quote(text, quote)
+    assert text[start:end] == quote  # A real match, rejected because its range is generated.
+    response = synthetic_response()
+    response["sentences"][0].update(quote=quote, ai_comment="Synthetic interpretation must remain hidden.")
+    research["response"]["response_text"] = json.dumps(response)
+    summary = finish(research, [saved["id"]])["summary"]
+    item = summary["sentences"][0]
+    assert item["status"] == "unresolved" and item["citation"] is None and item["ai_comment"] is None
+    assert "not issuer evidence" in item["detail"]
+    assert json.loads(rows(research, "model_runs")[0]["response_text"]) == response
+
+
+def test_legacy_single_source_result_remains_readable_with_original_citation(research):
+    current = finish(research)["summary"]
+    data, case_id = research["data"], research["case"]["id"]
+    prior = rows(research, "model_runs")[0]
+    legacy = json.loads(rows(research, "summaries")[0]["result_json"])
+    for key in ("sources", "warnings", "effort"):
+        legacy.pop(key)
+    for key in ("passages", "supplied_chars", "warnings"):
+        legacy["source"].pop(key)
+    for item in [legacy["reasoning"], *legacy["sentences"]]:
+        item.pop("passage_id")
+        item.pop("ai_comment")
+    legacy.update(model="gpt-5.6-luna", prompt_version="subscription-summary-2")
+    snapshot = json.loads(prior["snapshot_json"])
+    snapshot.pop("retrieval")
+    snapshot.pop("selected_document_ids")
+    with closing(db.connect(data)) as connection, connection:
+        run_id = connection.execute("INSERT INTO model_runs(case_id,task_type,request_key,request_json,source_json,"
+            "snapshot_json,status,detail,created_at) VALUES (?,'summary','synthetic-legacy','{}',?,?,'completed',?,?)",
+            (case_id, json.dumps(legacy["source"]), json.dumps(snapshot), "Synthetic legacy record.", prior["created_at"])).lastrowid
+        identity = connection.execute("INSERT INTO summaries(case_id,run_id,created_at,result_json) VALUES (?,?,?,?)",
+            (case_id, run_id, prior["created_at"], json.dumps(legacy))).lastrowid
+        cases._setting(connection, f"summary_current_{case_id}", identity)
+    stored = rows(research, "summaries")
+    old = cases.summary_status(data, case_id)["summary"]
+    assert old["id"] == identity and old["model"] == "gpt-5.6-luna" and old["stale"]
+    assert cases.read_summary_evidence(data, identity, 0) == cases.read_summary_evidence(data, current["id"], 0)
+    assert rows(research, "summaries") == stored and len(research["calls"]) == 1
 
 
 def test_cancel_queued_request_sends_nothing_and_does_not_restart(research):

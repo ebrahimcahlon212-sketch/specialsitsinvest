@@ -1,6 +1,7 @@
 """Saved Luna response; synthetic protocol envelopes. No automated live requests."""
 
 import asyncio
+import hashlib
 import json
 from threading import Event
 from types import SimpleNamespace
@@ -23,9 +24,9 @@ SAVED_USAGE = {'total': {'totalTokens': 2951, 'inputTokens': 2854, 'outputTokens
 def protocol(monkeypatch, tmp_path):
     monkeypatch.setenv('CODEX_HOME', str(tmp_path / 'synthetic-codex-home'))
     context = {'fingerprint': 'synthetic-context', 'configuration_files': {}}
-    monkeypatch.setattr(model, 'runtime_context', lambda: context)
+    monkeypatch.setattr(model, 'runtime_context', lambda model_name=None, effort=None: context)
     monkeypatch.setattr(constants, 'MODEL_CANCEL_SECONDS', .15)
-    controls = {'auth': 'chatgpt', 'allowance': True, 'model': constants.MODEL_NAME,
+    controls = {'auth': 'chatgpt', 'allowance': True, 'model': constants.MODEL_NAME, 'effort': constants.MODEL_EFFORT,
                 'sandbox': {'type': 'readOnly', 'networkAccess': False}, 'mode': 'complete'}
     sent = []
     launches = []
@@ -62,11 +63,11 @@ def protocol(monkeypatch, tmp_path):
             elif method == 'account/rateLimits/read':
                 reply = {'ordinaryUsageAllowed': controls['allowance'], 'rateLimits': {'primary': {'usedPercent': 7}}}
             elif method == 'model/list':
-                reply = {'data': [{'model': controls['model'], 'supportedReasoningEfforts': [{'reasoningEffort': 'low'}]}]}
+                reply = {'data': [{'model': controls['model'], 'supportedReasoningEfforts': [{'reasoningEffort': controls['effort']}]}]}
             elif method == 'config/read':
                 reply = {'config': config, 'layers': []}
             elif method == 'thread/start':
-                reply = {'thread': {'id': 'synthetic-thread'}, 'model': controls['model'], 'modelProvider': 'openai',
+                reply = {'thread': {'id': 'synthetic-thread'}, 'model': controls.get('thread_model', controls['model']), 'modelProvider': 'openai',
                          'approvalPolicy': 'never', 'approvalsReviewer': 'user', 'sandbox': controls['sandbox'],
                          'instructionSources': []}
             elif method == 'turn/start':
@@ -215,7 +216,82 @@ def test_retry_is_recorded_without_application_retry_and_usage_can_be_unknown(pr
 
 
 def test_status_uses_no_thread_or_generation(protocol):
+    summary_target(protocol)
     result = model.subscription_status(protocol.folder)
     assert result['auth_type'] == 'chatgpt' and result['plan'] == 'pro'
     assert result['model_available'] is True and result['error'] is None
+    assert (result['model'], result['effort']) == (constants.SUMMARY_MODEL_NAME, constants.SUMMARY_MODEL_EFFORT)
     assert not any(value.get('method') in ('thread/start', 'turn/start') for value in protocol.sent)
+
+
+def summary_target(protocol):
+    protocol.request.update(model=constants.SUMMARY_MODEL_NAME, effort=constants.SUMMARY_MODEL_EFFORT)
+    protocol.controls.update(model=constants.SUMMARY_MODEL_NAME, effort=constants.SUMMARY_MODEL_EFFORT)
+    protocol.config.update(model=constants.SUMMARY_MODEL_NAME, model_reasoning_effort=constants.SUMMARY_MODEL_EFFORT)
+
+
+def test_summary_target_is_exact_with_its_own_deadline_and_no_fallback(protocol):
+    summary_target(protocol)
+    result = run(protocol)
+    assert result['status'] == 'completed'
+    assert result['metadata']['deadline_seconds'] == constants.SUMMARY_DEADLINE_SECONDS
+    assert result['metadata']['model'] == constants.SUMMARY_MODEL_NAME
+    assert result['metadata']['effort'] == constants.SUMMARY_MODEL_EFFORT
+    turns = [value['params'] for value in protocol.sent if value.get('method') == 'turn/start']
+    assert len(turns) == 1
+    assert (turns[0]['model'], turns[0]['effort']) == (constants.SUMMARY_MODEL_NAME, constants.SUMMARY_MODEL_EFFORT)
+    start = next(value['params'] for value in protocol.sent if value.get('method') == 'thread/start')
+    assert start['model'] == constants.SUMMARY_MODEL_NAME and start['allowProviderModelFallback'] is False
+    assert start['permissions'] == 'ir_readonly' and start['environments'] == []
+    assert protocol.config['features']['shell_tool'] is False
+    assert protocol.config['apps']['_default']['enabled'] is False
+    assert result['tool_activity'] == []
+
+
+def test_summary_deadline_interrupts_once_without_using_other_tasks_deadline(protocol, monkeypatch):
+    summary_target(protocol)
+    protocol.controls['mode'] = 'timeout'
+    monkeypatch.setattr(constants, 'SUMMARY_DEADLINE_SECONDS', .05)
+    monkeypatch.setattr(constants, 'MODEL_DEADLINE_SECONDS', 30)
+    result = run(protocol)
+    assert result['status'] == 'timed_out' and result['submitted']
+    assert result['metadata']['deadline_seconds'] == .05
+    assert result['metadata']['cancellation_confirmed'] is True
+    methods = [value.get('method') for value in protocol.sent]
+    assert methods.count('turn/start') == methods.count('turn/interrupt') == 1
+
+
+@pytest.mark.parametrize('target', [('gpt-6-sol', 'low'), ('gpt-5.6-luna', 'high'),
+                                  ('gpt-6-luna', 'high'), ('gpt-6-sol', 'xhigh')])
+def test_unauthorised_model_effort_pairs_never_launch(protocol, target):
+    protocol.request.update(model=target[0], effort=target[1])
+    result = run(protocol)
+    assert result['status'] == 'failed' and 'pair is not enabled' in result['error']
+    assert result['submitted'] is False and protocol.launches == []
+
+
+@pytest.mark.parametrize('change', ['effort', 'thread_model'])
+def test_summary_unavailable_effort_or_substitution_never_submits(protocol, change):
+    summary_target(protocol)
+    protocol.controls[change] = 'low' if change == 'effort' else constants.MODEL_NAME
+    result = run(protocol)
+    assert result['status'] == 'failed' and result['submitted'] is False
+    assert not any(value.get('method') == 'turn/start' for value in protocol.sent)
+
+
+def test_runtime_identity_tracks_target_and_deadline_with_legacy_default(tmp_path, monkeypatch):
+    binary = tmp_path / 'synthetic-runtime'
+    binary.write_bytes(b'Synthetic runtime identity fixture; never executed.')
+    monkeypatch.setattr(constants, 'CODEX_BINARY', binary)
+    monkeypatch.setattr(constants, 'CODEX_SHA256', hashlib.sha256(binary.read_bytes()).hexdigest())
+    monkeypatch.setenv('CODEX_HOME', str(tmp_path / 'empty-home'))
+    monkeypatch.setenv('PROGRAMDATA', str(tmp_path / 'empty-programdata'))
+    luna = model.runtime_context()
+    assert luna == model.runtime_context(constants.MODEL_NAME, constants.MODEL_EFFORT)
+    sol = model.runtime_context(constants.SUMMARY_MODEL_NAME, constants.SUMMARY_MODEL_EFFORT)
+    assert sol['fingerprint'] != luna['fingerprint']
+    assert sol['settings_sha256'] != luna['settings_sha256']
+    assert sol['deadline_seconds'] == constants.SUMMARY_DEADLINE_SECONDS
+    monkeypatch.setattr(constants, 'SUMMARY_DEADLINE_SECONDS', constants.SUMMARY_DEADLINE_SECONDS + 1)
+    assert model.runtime_context(constants.SUMMARY_MODEL_NAME, constants.SUMMARY_MODEL_EFFORT)['fingerprint'] != sol['fingerprint']
+    assert model.runtime_context() == luna

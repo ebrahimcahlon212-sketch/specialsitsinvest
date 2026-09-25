@@ -36,19 +36,25 @@ export type SecImport = { id: number; request_url: string; filing_url: string; a
 export type SecImportResult = { imports: SecImport[] | null; active: boolean; error: string | null };
 export type SecContact = { name: string | null; email: string | null; error: string | null };
 export type SummarySource = { document_id: number; name: string | null; cleaner_version: string; text_hash: string;
-  original_sha256: string; start_offset: number; end_offset: number; total_chars: number };
+  original_sha256: string; start_offset: number; end_offset: number; total_chars: number;
+  filing_date?: string | null; form_type?: string | null; source_url?: string | null; supplied_chars?: number | null;
+  passages?: { id: number; start_offset: number; end_offset: number; heading: string | null; text: string; partial: boolean }[];
+  warnings?: string[] };
 export type SummaryStatement = { text: string; quote: string | null; citation: Citation | null;
-  status: 'quote matched' | 'unresolved' | 'assumption'; detail: string | null };
+  status: 'quote matched' | 'unresolved' | 'assumption'; detail: string | null; ai_comment?: string | null };
 export type SummarySentence = SummaryStatement & { section: 'company' | 'event' | 'what_must_happen' | 'dates' | 'unknowns' | 'risks' };
 export type SummaryRecord = { id: number; run_id: number; created_at: string; model: string; prompt_version: string;
   source: SummarySource; is_spinoff: 'yes' | 'no' | 'unclear'; reasoning: SummaryStatement; sentences: SummarySentence[];
-  stale: boolean; stale_reasons: string[]; usage: Record<string, unknown> | null };
+  stale: boolean; stale_reasons: string[]; usage: Record<string, unknown> | null;
+  sources?: SummarySource[]; warnings?: string[]; effort?: string | null };
 export type ModelRun = { id: number; status: string; detail: string; created_at: string; completed_at: string | null;
   usage: Record<string, unknown> | null; retry_count: number; usage_uncertain: boolean };
 export type SummaryState = { selected_document_id: number | null; source: SummarySource | null; summary: SummaryRecord | null;
+  selected_document_ids: number[]; sources: SummarySource[]; warnings: string[]; model: string; effort: string; deadline_seconds: number;
   runs: ModelRun[]; active: boolean; detail: string | null; error: string | null };
 export type SubscriptionState = { active: boolean; detail: string | null; checked_at: string | null; auth_type: string | null;
-  plan_type: string | null; available: boolean | null; model: string; usage: Record<string, unknown> | null; error: string | null };
+  plan_type: string | null; available: boolean | null; model: string; effort?: string | null;
+  usage: Record<string, unknown> | null; error: string | null };
 export type FactSource = { document_id: number; name: string | null; cleaner_version: string | null; text_hash: string;
   original_sha256: string; total_chars: number; filing_date: string | null; accession_number: string | null };
 export type FactRecord = { id: number; key: string; value: string | null; unit: string | null; currency: string | null;
@@ -102,8 +108,8 @@ type Bridge = {
   sec_contact(request: EmptyInput): Promise<SecContact>;
   save_sec_contact(request: { name: string; email: string }): Promise<SecContact>;
   summary_status(request: CaseIdInput): Promise<SummaryState>;
-  set_summary_source(request: CaseIdInput & { document_id: number }): Promise<SummaryState>;
-  generate_summary(request: CaseIdInput & { document_id: number }): Promise<SummaryState>;
+  set_summary_source(request: CaseIdInput & ({ document_ids: number[] } | { document_id: number })): Promise<SummaryState>;
+  generate_summary(request: CaseIdInput & ({ document_ids: number[] } | { document_id: number })): Promise<SummaryState>;
   cancel_summary(request: CaseIdInput): Promise<SummaryState>;
   read_summary_evidence(request: { summary_id: number; index: number }): Promise<{ document: DocumentView | null } & Failure>;
   subscription_status(request: EmptyInput): Promise<SubscriptionState>;
@@ -180,9 +186,9 @@ export async function saveSecContact(name: string, email: string) {
   return checked(await (await bridgeReady).save_sec_contact({ name, email }));
 }
 export async function summaryStatus(case_id: number) { return (await bridgeReady).summary_status({ case_id }); }
-export async function setSummarySource(case_id: number, document_id: number) { return (await bridgeReady).set_summary_source({ case_id, document_id }); }
-export async function generateSummary(case_id: number, document_id: number) { return (await bridgeReady).generate_summary({ case_id, document_id }); }
-export async function cancelSummary(case_id: number) { return (await bridgeReady).cancel_summary({ case_id }); }
+export async function setSummarySource(case_id: number, document_ids: number[]) { return checked(await (await bridgeReady).set_summary_source({ case_id, document_ids })); }
+export async function generateSummary(case_id: number, document_ids: number[]) { return checked(await (await bridgeReady).generate_summary({ case_id, document_ids })); }
+export async function cancelSummary(case_id: number) { return checked(await (await bridgeReady).cancel_summary({ case_id })); }
 export async function readSummaryEvidence(summary_id: number, index: number) {
   return present(checked(await (await bridgeReady).read_summary_evidence({ summary_id, index })).document);
 }

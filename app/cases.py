@@ -8,7 +8,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from threading import Event, RLock
 
-from app import calc
+from app import calc, constants
 from app.db import DATA_LOCK, connect
 
 _summary_lock = RLock()
@@ -277,9 +277,38 @@ def _source(connection, case_id, document_id=None):
         boundary = text.rfind('\n', int(end * .8), end)
         if boundary > 0:
             end = boundary
-    source = {key: row[key] for key in ('name','cleaner_version','text_hash','original_sha256')}
+    source = {key: row[key] for key in ('name','cleaner_version','text_hash','original_sha256',
+                                       'filing_date','form_type','source_url')}
     source.update(document_id=row['id'], start_offset=0, end_offset=end, total_chars=len(text))
     return source, text
+
+
+def _summary_sources(connection, case_id, selection=None):
+    if selection is None:
+        saved = connection.execute('SELECT value FROM settings WHERE key=?',
+                                   (f'summary_documents_{case_id}',)).fetchone()
+        if saved:
+            selection = json.loads(saved[0])
+        else:
+            source, _ = _source(connection, case_id)
+            selection = [source['document_id']] if source else []
+        selection = [connection.execute('SELECT MAX(id) FROM documents WHERE logical_document_id='
+            '(SELECT logical_document_id FROM documents WHERE id=? AND case_id=?)',
+            (identity, case_id)).fetchone()[0] or identity for identity in selection]
+    if type(selection) is int:
+        selection = [selection]
+    if (not isinstance(selection, list) or len(selection) > constants.SUMMARY_MAX_DOCUMENTS or
+            any(type(value) is not int or value <= 0 for value in selection) or len(set(selection)) != len(selection)):
+        raise ValueError('Choose up to six distinct document versions from this case.')
+    sources, logical_ids = [], set()
+    for identity in sorted(selection):
+        source, _ = _source(connection, case_id, identity)
+        logical = connection.execute('SELECT logical_document_id FROM documents WHERE id=?', (identity,)).fetchone()[0]
+        if logical in logical_ids:
+            raise ValueError('Choose one version of each document. Earlier versions remain saved for review.')
+        logical_ids.add(logical)
+        sources.append(source)
+    return sources
 
 
 def _snapshot(connection, case_id, source):
@@ -298,28 +327,100 @@ def _snapshot(connection, case_id, source):
 
 
 def prepare_summary(data_dir, case_id, document_id):
-    from app import model, prompts
+    from app import documents, model, prompts
     from app.constants import SUMMARY_MAX_NOTES_CHARS, SUMMARY_MAX_OWNER_FACTS_CHARS
 
     with closing(connect(data_dir)) as connection:
-        source, text = _source(connection, case_id, document_id)
+        sources = _summary_sources(connection, case_id, document_id)
+        if not sources:
+            raise ValueError('Select at least one usable document for this briefing.')
+        source = sources[0]
         snapshot = _snapshot(connection, case_id, source)
+        snapshot['selected_document_ids'] = [item['document_id'] for item in sources]
     if len(snapshot['question']) > SUMMARY_MAX_NOTES_CHARS:
         raise ValueError(f"The case notes exceed the {SUMMARY_MAX_NOTES_CHARS:,}-character summary input limit.")
-    payload = {'source': source, 'filing_excerpt': text[:source['end_offset']],
+    passages, warnings, searches = [], [], {}
+    for item in sources:
+        retrieved = documents.retrieve_summary_passages(data_dir, case_id, item['document_id'])
+        searches[str(item['document_id'])] = retrieved['searches']
+        for passage in retrieved['passages']:
+            passage['id'] = len(passages) + 1
+            passages.append(passage)
+        item['passages'] = retrieved['passages']
+        item['supplied_chars'] = sum(value['end_offset'] - value['start_offset'] for value in item['passages'])
+        item['warnings'] = retrieved['warnings']
+        warnings.extend(f"Document {item['document_id']}: {notice}" for notice in retrieved['warnings'])
+    included = set(snapshot['selected_document_ids'])
+    with closing(connect(data_dir)) as connection:
+        omitted = connection.execute('SELECT id,name,processing_error FROM documents d WHERE case_id=? AND '
+            'id=(SELECT MAX(id) FROM documents v WHERE v.logical_document_id=d.logical_document_id) ORDER BY id',
+            (case_id,)).fetchall()
+    warnings.extend(f"Document {row['id']} ({row['name']}) was not selected and was not reviewed."
+                    + (' Text processing failed.' if row['processing_error'] else '')
+                    for row in omitted if row['id'] not in included)
+    snapshot['retrieval'] = {'version': constants.SUMMARY_RETRIEVAL_VERSION, 'sources': sources,
+                             'passages': passages, 'searches': searches, 'warnings': warnings}
+    payload = {'sources': [{key: value for key, value in item.items() if key != 'passages'} for item in sources],
+               'passages': passages, 'coverage_warnings': warnings,
                'owner_notes_not_verified_facts': snapshot['question']}
     if snapshot.get('owner_facts'):
         if len(_json(snapshot['owner_facts']))>SUMMARY_MAX_OWNER_FACTS_CHARS:
             raise ValueError('Owner fact context exceeds the bounded summary input limit; no request was sent and nothing was truncated.')
         payload['owner_checked_or_corrected_facts'] = snapshot['owner_facts']
-    request = {'model': model.MODEL_NAME, 'effort': 'low', 'prompt': prompts.SUMMARY_PROMPT,
+    request = {'model': constants.SUMMARY_MODEL_NAME, 'effort': constants.SUMMARY_MODEL_EFFORT, 'prompt': prompts.SUMMARY_PROMPT,
                'prompt_version': prompts.SUMMARY_PROMPT_VERSION, 'input_text': _json(payload),
-               'output_schema': prompts.SummaryOutput.model_json_schema(), 'runtime_context': model.runtime_context(),
+               'output_schema': prompts.BriefingOutput.model_json_schema(),
+               'runtime_context': model.runtime_context(constants.SUMMARY_MODEL_NAME, constants.SUMMARY_MODEL_EFFORT),
                'source_snapshot': snapshot}
     if snapshot.get('owner_facts'):
         request['prompt_version'] += '+owner-facts-1'
         request['prompt'] += '\nOwner-checked or corrected facts are supplied separately. Preserve them; flag any conflict with the excerpt as unresolved. Do not claim they came from this excerpt or invent an excerpt citation for them.\n'
     return request, source, snapshot
+
+
+def _checked_briefing(data_dir, case_id, request, snapshot, raw):
+    import re
+    from app import prompts
+
+    output = prompts.BriefingOutput.model_validate_json(raw).model_dump()
+    retrieval = snapshot['retrieval']
+    sources = {source['document_id']: source for source in retrieval['sources']}
+    passages = {passage['id']: passage for passage in retrieval['passages']}
+    texts = {}
+    with closing(connect(data_dir)) as connection:
+        for identity, source in sources.items():
+            current, text = _source(connection, case_id, identity)
+            if current['text_hash'] != source['text_hash'] or current['original_sha256'] != source['original_sha256']:
+                raise ValueError('A supplied document version changed during generation.')
+            texts[identity] = text
+    checked = []
+    for item in [output['reasoning'], *output['sentences']]:
+        passage = passages.get(item['passage_id'])
+        if passage is None:
+            result = {**item, 'status': 'unresolved', 'citation': None,
+                      'detail': 'No valid supplied passage supports this item.'}
+        else:
+            text = texts[passage['document_id']]
+            if text[passage['start_offset']:passage['end_offset']] != passage['text']:
+                raise ValueError('A supplied passage no longer matches its saved text.')
+            bounded = {**sources[passage['document_id']], 'start_offset': passage['start_offset'],
+                       'end_offset': passage['end_offset']}
+            result = _checked_statement(item, bounded, text)
+            if result['citation']:
+                citation = result['citation']
+                generated = re.finditer(r'(?m)^Page \d+$|\[Extraction notice:[^\]]*\]', text)
+                if bounded['cleaner_version'].startswith('pdf-') and any(
+                        match.start() < citation['end_offset'] and match.end() > citation['start_offset']
+                        for match in generated):
+                    result.update(status='unresolved', citation=None, detail='An extraction notice or page locator is not issuer evidence.')
+        if result['citation'] is None:
+            # The raw response retains the original comment, but unsupported interpretation
+            # must not be promoted alongside a failed factual proposal.
+            result['ai_comment'] = None
+        checked.append(result)
+    return {'model': request['model'], 'effort': request['effort'], 'prompt_version': request['prompt_version'],
+            'source': retrieval['sources'][0], 'sources': retrieval['sources'], 'warnings': retrieval['warnings'],
+            'is_spinoff': output['is_spinoff'], 'reasoning': checked[0], 'sentences': checked[1:]}
 
 
 def _checked_statement(item, source, text):
@@ -355,6 +456,8 @@ def _summary_record(connection, row, source, snapshot):
     reasons = []
     if source is None or source['document_id'] != value['source']['document_id']:
         reasons.append('The selected source document/version has changed.')
+    if old_snapshot.get('selected_document_ids', [value['source']['document_id']]) != snapshot.get('selected_document_ids', []):
+        reasons.append('The selected documents have changed; the saved briefing retains its original sources.')
     if old_snapshot['documents'] != snapshot['documents']:
         reasons.append('The case has new or changed document versions; they were not included in this summary.')
     if any(old_snapshot[key] != snapshot[key] for key in ('question','title')):
@@ -364,6 +467,10 @@ def _summary_record(connection, row, source, snapshot):
     expected_prompt = prompts.SUMMARY_PROMPT_VERSION + ('+owner-facts-1' if snapshot.get('owner_facts') else '')
     if value['prompt_version'] != expected_prompt:
         reasons.append('The summary instructions have changed.')
+    if value['model'] != constants.SUMMARY_MODEL_NAME or value.get('effort') != constants.SUMMARY_MODEL_EFFORT:
+        reasons.append('The summary model or reasoning setting has changed.')
+    if old_snapshot.get('retrieval', {}).get('version') != constants.SUMMARY_RETRIEVAL_VERSION:
+        reasons.append('The briefing passage-selection rules have changed.')
     return {**value, 'id': row['id'], 'run_id': row['run_id'], 'created_at': row['created_at'],
             'stale': bool(reasons), 'stale_reasons': reasons,
             'usage': json.loads(run['usage_json']) if run['usage_json'] else None}
@@ -373,10 +480,12 @@ def summary_status(data_dir, case_id):
     with closing(connect(data_dir)) as connection:
         source_error = None
         try:
-            source, _ = _source(connection, case_id)
+            sources = _summary_sources(connection, case_id)
+            source = sources[0] if sources else None
         except ValueError as error:
-            source, source_error = None, str(error)
+            source, sources, source_error = None, [], str(error)
         snapshot = _snapshot(connection, case_id, source)
+        snapshot['selected_document_ids'] = [item['document_id'] for item in sources]
         selected = connection.execute("SELECT value FROM settings WHERE key=?", (f"summary_current_{case_id}",)).fetchone()
         row = connection.execute("SELECT * FROM summaries WHERE case_id=? "
             "ORDER BY (id=?) DESC,id DESC LIMIT 1", (case_id, int(selected[0]) if selected else -1)).fetchone()
@@ -389,26 +498,34 @@ def summary_status(data_dir, case_id):
     with _summary_lock:
         job = dict(_summary_jobs.get((str(data_dir.resolve()), case_id), {}))
     return {'selected_document_id': source['document_id'] if source else None, 'source': source,
+            'selected_document_ids': snapshot['selected_document_ids'], 'sources': sources, 'warnings': [],
+            'model': constants.SUMMARY_MODEL_NAME, 'effort': constants.SUMMARY_MODEL_EFFORT,
+            'deadline_seconds': constants.SUMMARY_DEADLINE_SECONDS,
             'summary': summary, 'runs': runs, 'active': job.get('active', False),
             'detail': job.get('detail'), 'error': job.get('error') or source_error}
 
 
 def set_summary_source(data_dir, case_id, document_id):
     with DATA_LOCK, closing(connect(data_dir)) as connection, connection:
-        _source(connection, case_id, document_id)
-        _setting(connection, f"summary_document_{case_id}", document_id)
+        sources = _summary_sources(connection, case_id, document_id)
+        _setting(connection, f"summary_documents_{case_id}", _json([item['document_id'] for item in sources]))
+        if sources:
+            _setting(connection, f"summary_document_{case_id}", sources[0]['document_id'])
     return summary_status(data_dir, case_id)
 
 
 def generate_summary(data_dir, case_id, document_id):
     from app import worker
 
+    with closing(connect(data_dir)) as connection:
+        if not _summary_sources(connection, case_id, document_id):
+            raise ValueError('Select at least one usable document for this briefing.')
     key = (str(data_dir.resolve()), case_id)
     with _summary_lock:
         if _summary_jobs.get(key, {}).get('active'):
             raise ValueError('A summary is already running for this case.')
         event = Event()
-        _summary_jobs[key] = {'active': True, 'detail': 'Preparing the selected document portion…',
+        _summary_jobs[key] = {'active': True, 'detail': 'Searching the selected documents for briefing passages...',
                               'error': None, 'cancel': event, 'finished': Event()}
     try:
         set_summary_source(data_dir, case_id, document_id)
@@ -511,14 +628,9 @@ def _run_summary(data_dir, case_id, document_id, cancel, task_type='summary', pr
                 status, detail = 'failed', 'The answer failed structural validation. Original response retained; no automatic retry.'
         elif status == 'completed':
             try:
-                output = prompts.SummaryOutput.model_validate_json(raw).model_dump()
-                with closing(connect(data_dir)) as connection:
-                    _, text = _source(connection, case_id, document_id)
-                result = {'model':request['model'], 'prompt_version':request['prompt_version'], 'source':source,
-                    'is_spinoff':output['is_spinoff'], 'reasoning':_checked_statement(output['reasoning'],source,text),
-                    'sentences':[_checked_statement(item,source,text) for item in output['sentences']]}
+                result = _checked_briefing(data_dir, case_id, request, snapshot, raw)
                 unresolved = sum(item['status'] != 'quote matched' for item in [result['reasoning'], *result['sentences']])
-                detail = f"AI summary saved. {unresolved} statement(s) are assumptions or unresolved. Only the stated opening portion was supplied."
+                detail = f"Case briefing saved. {unresolved} statement(s) unresolved. Only the recorded passages were supplied; review interpretation separately."
             except (ValueError, TypeError) as error:
                 from pydantic import ValidationError
                 status = 'failed'
@@ -600,7 +712,7 @@ def subscription_state(data_dir):
     with closing(connect(data_dir)) as connection:
         row = connection.execute("SELECT value FROM settings WHERE key='subscription_status'").fetchone()
     value = json.loads(row[0]) if row else {'checked_at':None,'auth_type':None,'plan_type':None,
-        'available':None,'model':model.MODEL_NAME,'usage':None,'error':None}
+        'available':None,'model':constants.SUMMARY_MODEL_NAME,'effort':constants.SUMMARY_MODEL_EFFORT,'usage':None,'error':None}
     with _summary_lock:
         job = dict(_connection_jobs.get(str(data_dir.resolve()), {}))
     return {**value, 'active':job.get('active',False),'detail':job.get('detail')}
@@ -630,12 +742,13 @@ def _check_subscription(data_dir):
         checked = model.subscription_status(data_dir)
         value = {'checked_at':checked.get('checked_at'), 'auth_type':checked.get('auth_type'),
             'plan_type':checked.get('plan'), 'available':checked.get('model_available'),
-            'model':model.MODEL_NAME, 'usage':checked.get('allowance'), 'error':checked.get('error')}
+            'model':checked.get('model',constants.SUMMARY_MODEL_NAME), 'effort':checked.get('effort',constants.SUMMARY_MODEL_EFFORT),
+            'usage':checked.get('allowance'), 'error':checked.get('error')}
         with DATA_LOCK, closing(connect(data_dir)) as connection, connection:
             _setting(connection,'subscription_status',_json(value))
     except Exception as error:
         value = {'checked_at':_now(),'auth_type':None,'plan_type':None,'available':None,
-                 'model':model.MODEL_NAME,'usage':None,'error':str(error)}
+                 'model':constants.SUMMARY_MODEL_NAME,'effort':constants.SUMMARY_MODEL_EFFORT,'usage':None,'error':str(error)}
         with DATA_LOCK, closing(connect(data_dir)) as connection, connection:
             _setting(connection,'subscription_status',_json(value))
     finally:
