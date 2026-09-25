@@ -77,13 +77,14 @@ def _walk(soup: BeautifulSoup) -> tuple[str, list, dict]:
     spans = [(node, max(start, left) - left, min(end, right) - left,
               max(left - start, 0))
              for node, start, end, _ in nodes if end > left and start < right]
-    bounds = {key: (max(start, left) - left, min(end, right) - left)
+    bounds = {key: (min(max(start - left, 0), len(text)), min(max(end - left, 0), len(text)))
               for key, (start, end) in regions.items()}
     return text, spans, bounds
 
 
 def canonical_text(clean_html: str) -> str:
-    return _walk(BeautifulSoup(clean_html, 'lxml'))[0]
+    options = {'preserve_whitespace_tags': {'html', 'body'}} if '<mark>' in clean_html else {}
+    return _walk(BeautifulSoup(clean_html, 'lxml', **options))[0]
 
 
 def _blocks(soup: BeautifulSoup, text: str, bounds: dict) -> list[dict]:

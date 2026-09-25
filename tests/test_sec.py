@@ -56,14 +56,19 @@ def item_by_url(record, url):
     return next(item for item in record["items"] if item["url"] == url)
 
 
-def test_real_filing_index_and_exhibit_url_share_association():
+@pytest.mark.parametrize('inline_viewer', [False, True])
+def test_real_filing_index_and_exhibit_url_share_association(inline_viewer):
     filing = sec.resolve_url(FILING)
     exhibit = sec.resolve_url(STATEMENT)
     assert filing["filing_url"] == exhibit["filing_url"] == FILING
     assert filing["base_url"].rstrip("/") == BASE.rstrip("/")
     assert filing["accession_number"] == "0001193125-24-264578"
     assert filing["cik"].lstrip("0") == "2023554"
-    parsed = sec.parse_index((FIXTURES / "sandisk_20241125_0001193125-24-264578-index.html").read_bytes(), filing)
+    content = (FIXTURES / "sandisk_20241125_0001193125-24-264578-index.html").read_bytes()
+    if inline_viewer:  # Synthetic viewer links around the saved real document list.
+        content = content.replace(b'href="/Archives/', b'href="/ix?doc=/Archives/')
+        assert sec.resolve_url('https://www.sec.gov/ix?doc=' + urlsplit(MAIN).path)['url'] == MAIN
+    parsed = sec.parse_index(content, filing)
     assert parsed["filing_date"] == "2024-11-25"
     assert parsed["form_type"] == "10-12B"
     assert item_by_url(parsed, MAIN)["document_type"] == "10-12B"
@@ -78,6 +83,10 @@ def test_real_filing_index_and_exhibit_url_share_association():
 @pytest.mark.parametrize("url", [
     "https://example.com/Archives/edgar/data/2023554/000119312524264578/d835366dex991.htm",
     "file:///C:/Windows/win.ini", "http://127.0.0.1/", "https://www.sec.gov/Archives/edgar/data/../secret",
+    'https://www.sec.gov/ix?doc=https://example.com/filing.htm',
+    'https://example.com/ix?doc=' + urlsplit(MAIN).path,
+    'https://www.sec.gov/ix?doc=' + urlsplit(MAIN).path + '&doc=' + urlsplit(STATEMENT).path,
+    'https://www.sec.gov/ix?doc=' + urlsplit(MAIN).path + '&extra=1',
 ])
 def test_synthetic_invalid_urls_are_rejected(url):
     with pytest.raises(ValueError):

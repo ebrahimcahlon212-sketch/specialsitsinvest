@@ -55,6 +55,10 @@ def _user_agent(name: str, email: str) -> str:
 
 def resolve_url(url: str) -> dict:
     value = urlsplit(url.strip())
+    if value.scheme == 'https' and value.netloc == 'www.sec.gov' and value.path == '/ix' and not value.fragment:
+        query = parse_qs(value.query, keep_blank_values=True)
+        if set(query) == {'doc'} and len(query['doc']) == 1 and query['doc'][0].startswith('/Archives/edgar/data/'):
+            value = urlsplit('https://www.sec.gov' + query['doc'][0])
     if (value.scheme != 'https' or value.hostname != 'www.sec.gov' or
             value.netloc != 'www.sec.gov' or value.query or value.fragment):
         raise ValueError('Paste an HTTPS www.sec.gov/Archives filing or exhibit URL without a query or fragment.')

@@ -80,6 +80,26 @@ def test_table_highlight_does_not_move_whitespace_outside_cells():
     assert '<mark>fractional shares</mark>' in marked
 
 
+@pytest.mark.parametrize('empty_ends', ['', '<p> </p><table><tr><td> </td></tr></table>'])
+def test_table_highlight_does_not_move_whitespace_outside_cells(empty_ends):
+    markup = ('<p>Synthetic prefix.</p><table><tr><td><p>Question?</p></td>\n'
+              '<td><p>fractional shares</p></td></tr></table>')
+    cleaned = documents.clean((empty_ends + markup + empty_ends).encode(), 'text/html')
+    text = documents.canonical_text(markup)
+    assert cleaned['canonical_text'] == text
+    assert all(0 <= b['start_offset'] < b['end_offset'] <= len(text) for b in cleaned['blocks'])
+    marked = documents._highlight(markup, text, text.index('Question?'), len(text))
+    assert documents.canonical_text(marked) == text
+    assert '<mark>fractional shares</mark>' in marked
+
+@pytest.mark.parametrize('quote', ['quoted phrase', 'quoted'])
+def test_highlight_keeps_trailing_mixed_node_whitespace(quote):
+    markup = '<p>Synthetic prefix quoted phrase \n<b>next</b></p>'
+    text = documents.canonical_text(markup)
+    start, end = documents.match_quote(text, quote)
+    assert documents.canonical_text(documents._highlight(markup, text, start, end)) == text
+
+
 def test_repeated_quotes_need_context_and_cannot_cross_documents(local_case):
     data_dir, source = local_case
     saved = documents.import_local(data_dir, 1, source)
