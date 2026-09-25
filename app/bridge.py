@@ -593,7 +593,7 @@ def _pick(bridge, folder: bool = False) -> Path | None:
     choices = bridge._window.create_file_dialog(
         webview.FileDialog.FOLDER if folder else webview.FileDialog.OPEN,
         allow_multiple=False,
-        file_types=() if folder else ("HTML or text (*.html;*.htm;*.txt)",),
+        file_types=() if folder else ("HTML, text or PDF (*.html;*.htm;*.txt;*.pdf)",),
     )
     if not choices:
         return None

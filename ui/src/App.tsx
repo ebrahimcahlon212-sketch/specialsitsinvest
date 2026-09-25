@@ -157,7 +157,7 @@ function CaseScreen({ record, onSaved, onBack }: { record: CaseRecord; onSaved: 
     <Paper withBorder p="lg"><Stack>
       <Group justify="space-between"><Title order={2}>Documents</Title><Button disabled={busy} onClick={() => run(async () => {
         const result = await api.importLocal(record.id); await refresh(); setHits(null); setMessage(actionText(result));
-      })}>Import HTML or text file</Button></Group>
+      })}>Import HTML, text or PDF file</Button></Group>
       <Text size="sm">Original files remain saved. Local files do not establish SEC filing metadata or exhibit completeness. The AI summary panel identifies the exact portion reviewed.</Text>
       {detail?.documents.map((row) => <Paper key={row.id} withBorder p="sm"><Group justify="space-between">
         <Stack gap={3}><Text fw={600}>{row.name ?? 'Unnamed document'}</Text>

@@ -3,10 +3,13 @@
 import hashlib
 import json
 from contextlib import closing
+from io import BytesIO
 from pathlib import Path
 
 import pytest
 from bs4 import BeautifulSoup
+from pypdf import PdfWriter, get_configuration
+from pypdf.generic import DecodedStreamObject, DictionaryObject, NameObject
 
 from app import db, documents
 
@@ -205,8 +208,8 @@ def test_shared_storage_deduplicates_and_preserves_distinct_associations(local_c
 def test_shared_storage_rejects_unsupported_media_before_saving(local_case):
     data_dir, _ = local_case
     with pytest.raises(ValueError, match='Only HTML'):
-        documents.store_document(data_dir, 1, b'Synthetic unsupported bytes', 'synthetic.pdf',
-                                 'application/pdf')
+        documents.store_document(data_dir, 1, b'Synthetic unsupported bytes', 'synthetic.zip',
+                                 'application/zip')
     assert not list((data_dir / 'documents').iterdir())
 
 
@@ -384,3 +387,127 @@ def test_question_saved_sandisk_passages_keep_source_hash_and_clickable_offsets(
         'quote': quote, 'start_offset': start, 'end_offset': start + len(quote), 'status': 'quote matched'})
     assert opened['citation']['text_version_id'] == saved['id']
     assert '<mark>fractional shares</mark>' in opened['html']
+
+
+def _synthetic_pdf(pages, *, compress=False, encrypted=False):
+    """Structural fixtures: text, blank pages and an image-only simulated scan."""
+    output = BytesIO()
+    with PdfWriter() as writer:
+        for text in pages:
+            page = writer.add_blank_page(width=612, height=792)
+            font = DictionaryObject({NameObject('/Type'): NameObject('/Font'),
+                                     NameObject('/Subtype'): NameObject('/Type1'),
+                                     NameObject('/BaseFont'): NameObject('/Helvetica')})
+            page[NameObject('/Resources')] = DictionaryObject({
+                NameObject('/Font'): DictionaryObject({NameObject('/F1'): font})})
+            stream = DecodedStreamObject()
+            if text is None:
+                stream.set_data(b'q 100 0 0 100 0 0 cm BI /W 1 /H 1 /BPC 8 /CS /G ID \x00 EI Q')
+            else:
+                escaped = text.replace('\\', '\\\\').replace('(', '\\(').replace(')', '\\)')
+                stream.set_data(f'BT /F1 12 Tf 50 700 Td ({escaped}) Tj ET'.encode('ascii'))
+            page.replace_contents(stream.flate_encode() if compress else stream)
+        if encrypted:
+            writer.encrypt('synthetic-fixture-password')
+        writer.write(output)
+    return output.getvalue()
+
+
+def test_pdf_pages_search_citations_dedup_and_new_versions(local_case):
+    data_dir, source = local_case
+    source = source.with_suffix('.pdf')
+    quote = 'Synthetic debt was USD 125 million at the reporting date.'
+    content = _synthetic_pdf(['Synthetic first page has enough explanatory text for extraction.', quote])
+    source.write_bytes(content)
+    first = documents.import_local(data_dir, 1, source)
+    assert first['searchable'] and first['cleaner_version'] == documents.constants.PDF_CLEANER_VERSION
+    assert documents.original_path(data_dir, first['id']).read_bytes() == content
+    assert documents.import_local(data_dir, 1, source)['id'] == first['id']
+    hits = documents.search(data_dir, 1, 'Synthetic debt')
+    assert len(hits) == 1 and hits[0]['heading'] == 'Page 2' and not hits[0]['partial']
+    opened = documents.read_document(data_dir, first['id'], hits[0]['block_id'], quote)
+    assert '<h2>Page 1</h2>' in opened['html'] and '<h2>Page 2</h2>' in opened['html']
+    assert f'<mark>{quote}</mark>' in opened['html']
+    assert documents.canonical_text(opened['html']) == opened['canonical_text']
+    later = documents.import_local(data_dir, 1, source, cleaner_version='synthetic-pdf-version-2')
+    assert later['id'] != first['id'] and later['logical_document_id'] == first['logical_document_id']
+    assert documents.read_citation(data_dir, opened['citation']) == opened
+    assert {hit['document_id'] for hit in documents.search(data_dir, 1, 'Synthetic debt')} == {later['id']}
+
+
+def test_pdf_blank_image_only_and_low_text_pages_are_explicitly_partial(local_case):
+    data_dir, _ = local_case
+    content = _synthetic_pdf(['Synthetic readable page contains enough text to support a useful quotation.',
+                              '', None, '42'])
+    saved = documents.store_document(data_dir, 1, content, 'Synthetic mixed PDF', 'application/pdf')
+    opened = documents.read_document(data_dir, saved['id'])
+    assert opened['canonical_text'].count('No usable text was extracted from this page') == 2
+    assert 'Little usable text was extracted from this page' in opened['html']
+    assert 'no OCR was performed' in opened['html']
+    with closing(db.connect(data_dir)) as connection:
+        blocks = connection.execute('SELECT * FROM blocks WHERE document_id = ?', (saved['id'],)).fetchall()
+    assert all(block['partial'] for block in blocks if block['heading'] in {'Page 2', 'Page 3', 'Page 4'})
+    assert all(block['text'] == opened['canonical_text'][block['start_offset']:block['end_offset']]
+               for block in blocks)
+    assert all(block['partial'] for block in blocks if block['text'].startswith('[Extraction notice:'))
+
+
+@pytest.mark.parametrize('pages', [[''], [None]])
+def test_pdf_without_usable_text_preserves_original_and_reports_failure(local_case, pages):
+    data_dir, _ = local_case
+    content = _synthetic_pdf(pages)
+    saved = documents.store_document(data_dir, 1, content, 'Synthetic unreadable PDF', 'application/pdf')
+    assert not saved['searchable'] and 'No usable text' in saved['processing_error']
+    assert 'no OCR' in saved['processing_error']
+    assert documents.original_path(data_dir, saved['id']).read_bytes() == content
+
+
+@pytest.mark.parametrize('constraint', ['pages', 'stream', 'aggregate'])
+def test_pdf_resource_limits_preserve_original_and_restore_library_limits(local_case, monkeypatch, constraint):
+    data_dir, _ = local_case
+    original_configuration = get_configuration()
+    if constraint == 'pages':
+        monkeypatch.setattr(documents.constants, 'PDF_MAX_PAGES', 1)
+        content = _synthetic_pdf(['Synthetic page one', 'Synthetic page two'])
+    else:
+        monkeypatch.setattr(documents.constants, 'PDF_MAX_STREAM_BYTES', 150)
+        content = _synthetic_pdf(['Synthetic ' * 30] if constraint == 'stream' else ['Synthetic ' * 9] * 2,
+                                 compress=True)
+    saved = documents.store_document(data_dir, 1, content, 'Synthetic limited PDF', 'application/pdf')
+    assert not saved['searchable'] and 'limit' in saved['processing_error'].lower()
+    assert documents.original_path(data_dir, saved['id']).read_bytes() == content
+    assert get_configuration() == original_configuration
+
+
+@pytest.mark.parametrize('content', [b'%PDF-1.7\nSynthetic malformed PDF',
+                                    _synthetic_pdf(['Synthetic encrypted text.'], encrypted=True)])
+def test_malformed_or_encrypted_pdf_is_not_represented_as_read(local_case, content):
+    data_dir, _ = local_case
+    saved = documents.store_document(data_dir, 1, content, 'Synthetic rejected PDF', 'application/pdf')
+    assert not saved['searchable'] and saved['processing_error']
+    assert documents.original_path(data_dir, saved['id']).read_bytes() == content
+
+
+def test_saved_mbgl_final_pdf_cover_ratio_and_page_citation(local_case):
+    # Saved official June 4, 2026 information statement; no network in this test.
+    # https://s29.q4cdn.com/690959130/files/doc_downloads/2026/06/Mobility-Global-Inc-Information-Statement-June-4-2026.pdf
+    data_dir, _ = local_case
+    source = Path(__file__).parent / 'fixtures' / 'mbgl_20260604_information_statement.pdf'
+    saved = documents.import_local(data_dir, 1, source)
+    assert saved['searchable'] and saved['processing_error'] is None
+    opened = documents.read_document(data_dir, saved['id'])
+    text = opened['canonical_text']
+    page_one_end = text.index('\n\nPage 2\n\n')
+    assert 'The date of this information statement is June 4, 2026.' in text[:page_one_end]
+    quote = ('Each holder of S&P Global common stock will receive one share of Mobility common stock for every '
+             'share of S&P Global common stock held as of the close of business on June 15, 2026, the record date for '
+             'the Distribution.')
+    start, end = documents.match_quote(text, quote, 0, page_one_end)
+    citation = {'document_id': saved['id'], 'text_version_id': saved['id'],
+                'document_hash': saved['original_sha256'], 'quote': text[start:end],
+                'start_offset': start, 'end_offset': end, 'status': 'quote matched'}
+    highlighted = documents.read_citation(data_dir, citation)
+    marked = BeautifulSoup(highlighted['html'], 'lxml').find_all('mark')
+    assert ' '.join(' '.join(mark.stripped_strings) for mark in marked) == quote
+    hits = documents.search(data_dir, 1, 'Each holder of S&P Global common stock')
+    assert any(hit['heading'] == 'Page 1' and hit['document_id'] == saved['id'] for hit in hits)

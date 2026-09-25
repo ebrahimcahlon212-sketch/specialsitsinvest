@@ -8,10 +8,13 @@ import sqlite3
 import uuid
 from contextlib import closing
 from datetime import datetime, timezone
+from io import BytesIO
 from pathlib import Path
 
 import nh3
 from bs4 import BeautifulSoup, NavigableString, Tag
+from pypdf import PdfReader, apply_configuration
+from pypdf.errors import LimitReachedError
 
 from app import constants, db
 from app.constants import CLEANER_VERSION, MAX_BLOCK_CHARS, MAX_DOCUMENT_BYTES, MAX_SEARCH_RESULTS
@@ -136,8 +139,65 @@ def _blocks(soup: BeautifulSoup, text: str, bounds: dict) -> list[dict]:
     return result
 
 
+def _pdf_markup(content: bytes) -> tuple[str, set[str]]:
+    """Extract text only; generated notices are explicitly separate from source text."""
+    limit = constants.PDF_MAX_STREAM_BYTES
+    markup = ['<p>[Extraction notice: Text extraction only; no OCR was performed. '
+              'Images, tables and reading order may not be represented completely. '
+              'Page numbers below count PDF pages, including covers.]</p>']
+    partial_pages, usable_characters, stream_bytes, text_bytes = set(), 0, 0, 0
+    # Context-local pypdf limits apply before decompression, including font/form
+    # streams. These bounds reduce allocation risk; they are not an OS memory cap.
+    with apply_configuration(
+        maximum_declared_stream_length=limit, array_based_stream_maximum_output_length=limit,
+        zlib_maximum_output_length=limit, lzw_maximum_output_length=limit,
+        run_length_maximum_output_length=limit, jbig2_maximum_output_length=limit,
+        image_maximum_buffer_size=limit, jbig2dec_binary=None,
+    ), PdfReader(BytesIO(content), strict=True) as reader:
+        if reader.is_encrypted:
+            raise ValueError('Encrypted PDFs are not supported; the original was saved.')
+        if len(reader.pages) > constants.PDF_MAX_PAGES:
+            raise ValueError(f'PDF exceeds the {constants.PDF_MAX_PAGES}-page limit; the original was saved.')
+        for number, page in enumerate(reader.pages, 1):
+            heading = f'Page {number}'
+            markup.append(f'<h2>{heading}</h2>')
+            try:
+                stream = page.get_contents()
+                stream_bytes += len(stream.get_data()) if stream is not None else 0
+                if stream_bytes > limit:
+                    raise LimitReachedError('PDF page content exceeds the total decoded-stream limit.')
+                extracted = page.extract_text()
+            except LimitReachedError:
+                raise
+            except Exception as error:
+                logger.warning('PDF page %s could not be extracted: %s', number, error)
+                partial_pages.add(heading)
+                markup.append('<p>[Extraction notice: This page could not be extracted: '
+                              + html.escape(str(error)[:500]) + '. No OCR was performed.]</p>')
+                continue
+            text_bytes += len(extracted.encode('utf-8'))
+            if text_bytes > limit:
+                raise LimitReachedError('PDF text exceeds the total extracted-text limit.')
+            usable = sum(character.isalnum() for character in extracted)
+            usable_characters += usable
+            if usable < constants.PDF_MIN_PAGE_CHARS:
+                partial_pages.add(heading)
+                description = 'No usable text' if not usable else 'Little usable text'
+                markup.append(f'<p>[Extraction notice: {description} was extracted from this page. '
+                              'It may be blank or image-based; no OCR was performed.]</p>')
+            markup.extend(f'<p>{html.escape(line)}</p>' for line in extracted.splitlines())
+        if not usable_characters:
+            raise ValueError(f'No usable text was extracted from any of the {len(reader.pages)} PDF pages. '
+                             'The PDF may be blank or image-based; no OCR was performed. The original was saved.')
+    return ''.join(markup), partial_pages
+
+
 def clean(content: bytes, media_type: str) -> dict:
-    if media_type == 'text/plain':
+    partial_pages = set()
+    if media_type == 'application/pdf':
+        markup, partial_pages = _pdf_markup(content)
+        soup = BeautifulSoup(markup, 'lxml')
+    elif media_type == 'text/plain':
         try:
             decoded = content.decode('utf-8-sig')
         except UnicodeDecodeError as error:
@@ -170,7 +230,11 @@ def clean(content: bytes, media_type: str) -> dict:
     cleaned = _safe_html(str(BeautifulSoup(cleaned, 'lxml')))
     parsed = BeautifulSoup(cleaned, 'lxml')
     text, _, bounds = _walk(parsed)
-    return {'html': cleaned, 'canonical_text': text, 'blocks': _blocks(parsed, text, bounds)}
+    blocks = _blocks(parsed, text, bounds)
+    if media_type == 'application/pdf':
+        for block in blocks:
+            block['partial'] = block['heading'] in partial_pages or block['text'].startswith('[Extraction notice:')
+    return {'html': cleaned, 'canonical_text': text, 'blocks': blocks}
 
 
 def _stored_path(data_dir: Path, relative: str) -> Path:
@@ -216,11 +280,11 @@ def import_local(data_dir: Path, case_id: int, selected_path: Path, *,
                  cleaner_version: str | None = None) -> dict:
     """The bridge supplies a path selected by the operating-system file picker."""
     suffix = selected_path.suffix.lower()
-    if suffix not in {'.html', '.htm', '.txt'}:
-        raise ValueError('Choose an HTML or UTF-8 text file. PDF import is not available.')
+    if suffix not in {'.html', '.htm', '.txt', '.pdf'}:
+        raise ValueError('Choose an HTML, UTF-8 text or text-PDF file.')
     with selected_path.open('rb') as source:
         content = source.read(MAX_DOCUMENT_BYTES + 1)
-    media_type = 'text/plain' if suffix == '.txt' else 'text/html'
+    media_type = {'.txt': 'text/plain', '.pdf': 'application/pdf'}.get(suffix, 'text/html')
     return store_document(data_dir, case_id, content, selected_path.name, media_type,
                           cleaner_version=cleaner_version)
 
@@ -228,13 +292,15 @@ def import_local(data_dir: Path, case_id: int, selected_path: Path, *,
 def store_document(data_dir: Path, case_id: int, content: bytes, name: str, media_type: str, *,
                    logical_document_id: str | None = None, metadata: dict | None = None,
                    cleaner_version: str | None = None) -> dict:
-    """Save HTML/text bytes and source metadata without replacing earlier versions."""
-    if media_type not in {'text/html', 'text/plain'}:
-        raise ValueError('Only HTML and UTF-8 text documents can be imported.')
+    """Save document bytes and source metadata without replacing earlier versions."""
+    if media_type not in {'text/html', 'text/plain', 'application/pdf'}:
+        raise ValueError('Only HTML, UTF-8 text and text-PDF documents can be imported.')
     if len(content) > MAX_DOCUMENT_BYTES:
         raise ValueError(f'Document exceeds the {MAX_DOCUMENT_BYTES // (1024 * 1024)} MiB limit.')
     digest = hashlib.sha256(content).hexdigest()
-    version = CLEANER_VERSION if cleaner_version is None else cleaner_version
+    version = constants.PDF_CLEANER_VERSION if media_type == 'application/pdf' else CLEANER_VERSION
+    if cleaner_version is not None:
+        version = cleaner_version
     if not version.strip():
         raise ValueError('A cleaning version is required.')
     metadata_fields = ('source_url', 'filing_date', 'accession_number',
