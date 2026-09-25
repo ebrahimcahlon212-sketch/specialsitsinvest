@@ -258,6 +258,49 @@ def saved_december_fact_passages(tmp_path_factory):
     return data, document, {run["id"]: run for run in saved["runs"]}
 
 
+def test_saved_run14_financial_response_keeps_verified_revenue_and_unsupported_values_unknown(saved_december_fact_passages):
+    data, document, runs = saved_december_fact_passages
+    fixture = Path(__file__).parent / "fixtures" / "sandisk_20241220_luna_facts.json"
+    original_fixture = fixture.read_bytes()
+    run = runs[14]
+    assert run["status"] == "completed" and run["response_text"]
+    request, source = json.loads(run["request_json"]), json.loads(run["source_json"])
+    payload = json.loads(request["input_text"])
+    actual = documents.read_document(data, document["id"])
+    assert source["document_id"] == payload["source"]["document_id"] == 5
+    assert source["text_hash"] == actual["text_hash"]
+    assert source["original_sha256"] == actual["original_sha256"]
+    assert request["prompt_version"] == "subscription-facts-3"
+    assert payload["retrieval_version"] == "fts-context-3"
+    source["document_id"] = payload["source"]["document_id"] = document["id"]
+    for passage in payload["passages"]:
+        assert passage["document_id"] == 5
+        passage["document_id"] = document["id"]
+    request["input_text"] = json.dumps(payload)
+    checked = {item["key"]: item for item in cases._checked_facts(data, request, source, run["response_text"])}
+    assert set(checked) == {"pro_forma_revenue", "pro_forma_operating_income", "pro_forma_ebitda"}
+    revenue = checked["pro_forma_revenue"]
+    assert revenue["status"] == "extracted" and revenue["value"] == "1,883"
+    assert (revenue["unit"], revenue["currency"], revenue["basis"]) == ("in millions", "$", "pro_forma")
+    assert revenue["period"] == "For the three months ended September 27, 2024"
+    assert revenue["entity"] == "The Flash Business of Western Digital Corporation"
+    operating, ebitda = checked["pro_forma_operating_income"], checked["pro_forma_ebitda"]
+    assert operating["status"] == ebitda["status"] == "unknown"
+    assert operating["value"] is None and ebitda["value"] is None
+    assert "Financial currency" in operating["reason"]
+    assert all(term in ebitda["reason"] for term in ("qualifications", "Financial entity", "Financial period"))
+    proposals = {item["key"]: item for item in json.loads(run["response_text"])["facts"]}
+    assert proposals["pro_forma_operating_income"]["value"] == "283"
+    assert proposals["pro_forma_ebitda"]["value"] == "400"
+    for record in checked.values():
+        for evidence in record["citations"]:
+            citation = evidence["citation"]
+            assert citation["document_id"] == citation["text_version_id"] == document["id"]
+            assert citation["quote"] == actual["canonical_text"][citation["start_offset"]:citation["end_offset"]]
+            assert documents.read_citation(data, citation)["citation"] == citation
+    assert fixture.read_bytes() == original_fixture
+
+
 def check_constructed_proposal(saved_december_fact_passages, run_id, proposal):
     data, document, runs = saved_december_fact_passages
     request = json.loads(runs[run_id]["request_json"])
