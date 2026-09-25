@@ -6,13 +6,13 @@ InvestResearch is a Windows desktop app for researching US company spinoffs. It 
 
 You can import a filing, search its text and open the source passage behind a quotation. The calculators cover spinoff valuations and fixed-price tender offers. Saved scenarios keep the assumptions used for each calculation.
 
-You can export cases, make backups and use an existing ChatGPT subscription for summaries and proposed deal terms. Model results need review. A matching quotation confirms the words occur in the filing, not that the interpretation is right.
+You can export cases, make backups and use an existing ChatGPT subscription for summaries, proposed deal terms and questions about saved documents. Model results need review. A matching quotation confirms the words occur in the filing, not that the interpretation is right.
 
-Research is stored locally in SQLite and document files. The app does not place trades. Automatic discovery, document questions and broker connections are not implemented.
+Research is stored locally in SQLite and document files. The app does not place trades. Automatic discovery and broker connections are not implemented.
 
 ## Setup
 
-You need Windows, Microsoft Edge WebView2, Python and Node.js with npm. Python 3.13 is the project target. The current checks were run with Python 3.12; Python 3.13 compatibility isn't unverified.
+You need Windows, Microsoft Edge WebView2, Python and Node.js with npm. Python 3.13 is the project target. The current checks were run with Python 3.12; Python 3.13 compatibility is still unverified.
 
 Open PowerShell in the project folder. With Python 3.13 already installed:
 
@@ -25,7 +25,7 @@ npm.cmd run build
 Set-Location ..
 ```
 
-For a provisional Python 3.12 setup, replace `py -3.13` with `py -3.12`. The app does not install or upgrade Python.
+The app does not install or upgrade Python. The Python 3.12 trial uses a separate environment and launcher.
 
 ## Run
 
@@ -49,17 +49,17 @@ If you already use **InvestResearch Trial**, keep using that shortcut and its ex
 
 ## First case
 
-Create a case, then import a local HTML or text file. To import an SEC filing URL, first enter your name and contact email in **Settings** for the SEC request header. Contact details are stored locally, not in the source code.
+Create a case, then import a local HTML, UTF-8 text or text-PDF file. To import an SEC filing URL, first enter your name and contact email in **Settings** for the SEC request header. Contact details are stored locally, not in the source code.
 
 Open the case to search documents, save calculations and record decisions. **Evidence / edit** opens the source for an extracted term and lets you save a correction with a reason. Earlier values are retained.
 
+Under **Ask about a document**, select a saved document version, type a question and click **Ask question**. The answer lists the passages used. Click **Quote matched** to open its source. Previous answers remain in **Saved answers**; an unchanged request reuses its saved result. **Cancel** stops a pending request without restarting it.
+
 ## Optional subscription features
 
-Summaries and deal terms require an installed Codex client and an existing ChatGPT login. The tested client is `0.155.0-alpha.9.2`, using `gpt-5.6-luna` with low reasoning. Other client versions are unverified. The app does not install Codex or fall back to paid API calls.
+Summaries, deal terms and document answers require an installed Codex client and an existing ChatGPT login. The currently pinned client is `0.155.0-alpha.16`, using `gpt-6-sol` with high reasoning for case briefings and `gpt-5.6-luna` with low reasoning for deal terms and document questions. If Codex replaces this executable during an update, the app stops generation until the replacement is checked. It does not install Codex or fall back to paid API calls.
 
-Use **Settings > Check connection** before a request. Generation runs only when requested. The model process has broad read-only filesystem access; it is not isolated to a document folder. Supported optional tools and connectors are disabled, but universal prevention of tool execution has not been established.
-
-Extraction has been checked against saved fixtures and a live Sandisk filing example. Two revised batches completed; the financial batch timed out, leaving its earlier saved results in place. Some Windows interactions and document punctuation still need checking.
+Use **Settings > Check connection** before a request. Under **Case briefing**, select up to six documents and click **Generate case briefing** or **Refresh case briefing**. Expand **Supporting quotation** and click **Open quoted passage** to inspect evidence. Generation runs only when requested. The model process has broad read-only filesystem access; it is not isolated to a document folder. Supported optional tools and connectors are disabled, but universal prevention of tool execution has not been established.
 
 ## Development
 
