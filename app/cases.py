@@ -14,6 +14,7 @@ from app.db import DATA_LOCK, connect
 _summary_lock = RLock()
 _summary_jobs = {}
 _fact_jobs = {}
+_question_jobs = {}
 _connection_jobs = {}
 
 
@@ -434,7 +435,7 @@ def cancel_summaries_on_close(data_dir):
     from app.constants import MODEL_CANCEL_SECONDS
 
     with _summary_lock:
-        jobs = [job for key, job in (*_summary_jobs.items(), *_fact_jobs.items())
+        jobs = [job for key, job in (*_summary_jobs.items(), *_fact_jobs.items(), *_question_jobs.items())
                 if key[0] == str(data_dir.resolve()) and job.get('active')]
         for job in jobs:
             job['cancel'].set()
@@ -446,7 +447,7 @@ def _run_summary(data_dir, case_id, document_id, cancel, task_type='summary', pr
     from app import model, prompts
 
     key = (str(data_dir.resolve()), case_id)
-    jobs = _summary_jobs if task_type == 'summary' else _fact_jobs
+    jobs = {'summary': _summary_jobs, 'facts': _fact_jobs, 'qa': _question_jobs}[task_type]
     run_id = None
     def progress(message, submitted=False, usage=None):
         with _summary_lock:
@@ -464,24 +465,29 @@ def _run_summary(data_dir, case_id, document_id, cancel, task_type='summary', pr
         request, source, snapshot = prepared or prepare_summary(data_dir, case_id, document_id)
         request_key = hashlib.sha256(_json(request).encode('utf-8')).hexdigest()
         with DATA_LOCK, closing(connect(data_dir)) as connection, connection:
-            table = 'summaries' if task_type == 'summary' else 'facts'
+            table = {'summary': 'summaries', 'facts': 'facts', 'qa': 'qa'}[task_type]
             cached = connection.execute(f"SELECT s.id,r.id AS run_id FROM {table} s JOIN model_runs r ON r.id=s.run_id "
                 "WHERE r.case_id=? AND r.request_key=? AND r.status='completed' ORDER BY s.id DESC LIMIT 1",
                 (case_id,request_key)).fetchone()
             if cached:
                 if task_type == 'summary':
                     _setting(connection, f"summary_current_{case_id}", cached['id'])
-                else:
+                elif task_type == 'facts':
                     _select_fact_run(connection, case_id, cached['run_id'])
+                else:
+                    _setting(connection, f"question_current_{case_id}", cached['id'])
             else:
                 cursor = connection.execute("INSERT INTO model_runs(case_id,task_type,request_key,request_json,source_json,"
                     "snapshot_json,status,detail,created_at) VALUES (?,?,?,?,?,?,'connecting',?,?)",
                     (case_id,task_type,request_key,_json(request),_json(source),_json(snapshot),'Checking subscription connection…',_now()))
                 run_id = cursor.lastrowid
         if cached:
-            progress(f'Saved {"summary" if task_type == "summary" else "fact batch"} reused. No new model request or subscription usage.')
+            label = {'summary': 'summary', 'facts': 'fact batch', 'qa': 'answer'}[task_type]
+            progress(f'Saved {label} reused. No new model request or subscription usage.')
             return {'status':'completed','run_id':cached['run_id'],'cached':True}
-        outcome = model.generate(data_dir, request, cancel, progress)
+        no_evidence = task_type == 'qa' and not snapshot['retrieval']['passages']
+        outcome = ({'status': 'completed', 'submitted': False, 'metadata': {'origin': 'local_retrieval'}}
+                   if no_evidence else model.generate(data_dir, request, cancel, progress))
         status = outcome['status']
         usage = outcome.get('usage')
         submitted = outcome.get('submitted', False)
@@ -496,6 +502,13 @@ def _run_summary(data_dir, case_id, document_id, cancel, task_type='summary', pr
                 detail = f"Saved fact batch: {sum(item['status']=='extracted' for item in result)} extracted; remaining values unknown."
             except (ValueError, TypeError):
                 status, detail = 'failed', 'The fact response failed structural validation. Original response retained; no automatic retry.'
+        elif status == 'completed' and task_type == 'qa':
+            try:
+                result = _checked_answer(data_dir, request, source, snapshot, raw)
+                detail = ('No relevant passages were retrieved. Limitation saved without a model request.'
+                          if no_evidence else 'Answer saved. Review the quoted passages and unresolved statements.')
+            except (ValueError, TypeError):
+                status, detail = 'failed', 'The answer failed structural validation. Original response retained; no automatic retry.'
         elif status == 'completed':
             try:
                 output = prompts.SummaryOutput.model_validate_json(raw).model_dump()
@@ -528,6 +541,10 @@ def _run_summary(data_dir, case_id, document_id, cancel, task_type='summary', pr
                 for fact in result:
                     _insert_fact(connection,case_id,document_id,run_id,None,'model',fact)
                 _select_fact_run(connection,case_id,run_id)
+            elif result is not None and status == 'completed' and task_type == 'qa':
+                cursor = connection.execute('INSERT INTO qa(case_id,run_id,created_at,question,result_json) VALUES (?,?,?,?,?)',
+                    (case_id,run_id,_now(),result['question'],_json(result)))
+                _setting(connection, f"question_current_{case_id}", cursor.lastrowid)
             elif result is not None and status == 'completed':
                 cursor = connection.execute("INSERT INTO summaries(case_id,run_id,created_at,result_json) VALUES (?,?,?,?)",
                     (case_id,run_id,_now(),_json(result)))
@@ -980,3 +997,167 @@ def correct_fact(data_dir, *, case_id, key, previous_id, value, unit, currency, 
             raise ValueError('A published or forecast correction needs a supporting quote; an unsourced value must be an assumption.')
         _insert_fact(connection,case_id,document_id,None,previous_id,'human',fact)
     return facts_status(data_dir,case_id)
+
+
+def prepare_question(data_dir, case_id, document_id, question):
+    from app import documents, model, prompts
+    from app.constants import QUESTION_MAX_CHARS, QUESTION_RETRIEVAL_VERSION
+
+    if not isinstance(question, str) or not question.strip() or len(question) > QUESTION_MAX_CHARS:
+        raise ValueError(f'Enter a question of 1 to {QUESTION_MAX_CHARS:,} characters.')
+    retrieval = documents.retrieve_question_passages(data_dir, case_id, document_id, question)
+    with closing(connect(data_dir)) as connection:
+        incomplete = connection.execute('SELECT COUNT(*) FROM documents d WHERE case_id=? AND '
+            'id=(SELECT MAX(id) FROM documents v WHERE v.logical_document_id=d.logical_document_id) AND '
+            '(canonical_text IS NULL OR length(canonical_text)=0 OR processing_error IS NOT NULL)', (case_id,)).fetchone()[0]
+    if incomplete:
+        retrieval['warnings'].append(f'{incomplete} saved document version(s) in this case lack usable text. They were not reviewed.')
+    payload = {**retrieval, 'question': question, 'retrieval_version': QUESTION_RETRIEVAL_VERSION}
+    request = {'model': model.MODEL_NAME, 'effort': 'low', 'prompt': prompts.QUESTION_PROMPT,
+        'prompt_version': prompts.QUESTION_PROMPT_VERSION, 'input_text': _json(payload),
+        'output_schema': prompts.QuestionOutput.model_json_schema(),
+        'runtime_context': model.runtime_context() if retrieval['passages'] else {'origin': 'local_retrieval'}}
+    return request, retrieval['source'], {'retrieval': payload}
+
+
+def _checked_answer(data_dir, request, source, snapshot, raw):
+    from app import prompts
+
+    retrieval = snapshot['retrieval']
+    if not retrieval['passages']:
+        output = {'sentences': [{'text': 'No relevant evidence was found by this search in the selected document. '
+            'This does not establish that the filing omits the information.', 'quote': None,
+            'status': 'unresolved', 'passage_id': None}], 'limitations': ['No model request was sent. Try more specific words from the document.']}
+    else:
+        output = prompts.QuestionOutput.model_validate_json(raw).model_dump()
+    with closing(connect(data_dir)) as connection:
+        row = connection.execute('SELECT case_id FROM documents WHERE id=?', (source['document_id'],)).fetchone()
+        if row is None:
+            raise ValueError('The saved source document does not exist.')
+        checked_source, text = _source(connection, row[0], source['document_id'])
+    if checked_source['text_hash'] != source['text_hash']:
+        raise ValueError('The supplied document version changed during the request.')
+    passages = {p['id']: p for p in retrieval['passages']}
+    checked = []
+    for item in output['sentences']:
+        sentence = {key: item[key] for key in ('text', 'quote', 'status')}
+        passage = passages.get(item['passage_id'])
+        if passage is None:
+            sentence.update(status='unresolved', citation=None, detail='No supplied passage supports this statement.')
+        else:
+            sentence = _checked_statement(sentence, {**source, 'start_offset': passage['start_offset'],
+                                                    'end_offset': passage['end_offset']}, text)
+        checked.append(sentence)
+    return {**retrieval, 'model': request['model'], 'prompt_version': request['prompt_version'],
+            'sentences': checked, 'limitations': output['limitations']}
+
+
+def question_status(data_dir, case_id):
+    from app import prompts
+    from app.constants import QUESTION_RETRIEVAL_VERSION
+
+    with closing(connect(data_dir)) as connection:
+        _require_case(connection, case_id)
+        sources = [dict(row) for row in connection.execute('SELECT id AS document_id,name,cleaner_version,text_hash,'
+            'original_sha256,length(canonical_text) AS total_chars,filing_date,accession_number FROM documents '
+            'WHERE case_id=? AND length(canonical_text)>0 AND processing_error IS NULL ORDER BY id DESC', (case_id,))]
+        selected = connection.execute('SELECT value FROM settings WHERE key=?', (f'question_document_{case_id}',)).fetchone()
+        document_id = int(selected[0]) if selected else None
+        if document_id is None:
+            try:
+                source, _ = _source(connection, case_id)
+                document_id = source['document_id'] if source else None
+            except ValueError:
+                pass  # Unusable versions are excluded from selection; saved answers remain readable.
+        current = connection.execute('SELECT value FROM settings WHERE key=?', (f'question_current_{case_id}',)).fetchone()
+        answers = []
+        for row in connection.execute('SELECT * FROM qa WHERE case_id=? ORDER BY (id=?) DESC,id DESC',
+                                      (case_id, int(current[0]) if current else -1)):
+            answer = json.loads(row['result_json'])
+            old_id = answer['source']['document_id']
+            latest = connection.execute('SELECT MAX(id) FROM documents WHERE logical_document_id='
+                '(SELECT logical_document_id FROM documents WHERE id=?)', (old_id,)).fetchone()[0]
+            reasons = []
+            if latest != old_id:
+                reasons.append('A newer version of this document is saved; it was not reviewed for this answer.')
+            if document_id != old_id:
+                reasons.append('This answer uses a different document from the current selection.')
+            if answer['prompt_version'] != prompts.QUESTION_PROMPT_VERSION or answer['retrieval_version'] != QUESTION_RETRIEVAL_VERSION:
+                reasons.append('Question instructions or retrieval rules have changed.')
+            answers.append({**answer, 'id': row['id'], 'case_id': case_id, 'run_id': row['run_id'],
+                'created_at': row['created_at'], 'stale': bool(reasons), 'stale_reason': ' '.join(reasons) or None})
+        runs = []
+        for row in connection.execute("SELECT * FROM model_runs WHERE case_id=? AND task_type='qa' ORDER BY id DESC LIMIT 10", (case_id,)):
+            runs.append({key: row[key] for key in ('id','status','detail','created_at','completed_at','retry_count')})
+            runs[-1].update(usage=json.loads(row['usage_json']) if row['usage_json'] else None, usage_uncertain=bool(row['usage_uncertain']))
+    with _summary_lock:
+        job = _question_jobs.get((str(data_dir.resolve()), case_id), {})
+        return {'case_id': case_id, 'selected_document_id': document_id, 'sources': sources, 'answers': answers,
+                'runs': runs, 'active': job.get('active', False), 'detail': job.get('detail'), 'error': job.get('error')}
+
+
+def ask_question(data_dir, case_id, document_id, question):
+    from app import worker
+    from app.constants import QUESTION_MAX_CHARS
+
+    if not isinstance(question, str) or not question.strip() or len(question) > QUESTION_MAX_CHARS:
+        raise ValueError(f'Enter a question of 1 to {QUESTION_MAX_CHARS:,} characters.')
+    with DATA_LOCK, closing(connect(data_dir)) as connection, connection:
+        _source(connection, case_id, document_id)
+        _setting(connection, f'question_document_{case_id}', document_id)
+    key = (str(data_dir.resolve()), case_id)
+    with _summary_lock:
+        if _question_jobs.get(key, {}).get('active'):
+            raise ValueError('A document question is already running for this case.')
+        cancel = Event()
+        _question_jobs[key] = {'active': True, 'detail': 'Searching the selected document...',
+                              'error': None, 'cancel': cancel, 'finished': Event()}
+    try:
+        worker.submit(_run_question, data_dir, case_id, document_id, question, cancel)
+    except Exception:
+        with _summary_lock:
+            _question_jobs[key]['active'] = False
+            _question_jobs[key]['finished'].set()
+        raise
+    return question_status(data_dir, case_id)
+
+
+def _run_question(data_dir, case_id, document_id, question, cancel):
+    key = (str(data_dir.resolve()), case_id)
+    try:
+        if cancel.is_set():
+            with _summary_lock:
+                _question_jobs[key]['detail'] = 'Cancelled before a model request was submitted.'
+            return
+        prepared = prepare_question(data_dir, case_id, document_id, question)
+        _run_summary(data_dir, case_id, document_id, cancel, 'qa', prepared)
+    except Exception as error:
+        logging.getLogger(__name__).exception('Document question failed.')
+        with _summary_lock:
+            _question_jobs[key].update(detail='Question stopped; saved answers were preserved.', error=str(error))
+    finally:
+        with _summary_lock:
+            _question_jobs[key]['active'] = False
+            _question_jobs[key]['finished'].set()
+
+
+def cancel_question(data_dir, case_id):
+    with _summary_lock:
+        job = _question_jobs.get((str(data_dir.resolve()), case_id), {})
+        if job.get('active'):
+            job['cancel'].set()
+            job['detail'] = 'Cancelling the question. It will not restart automatically; final usage may be unknown.'
+    return question_status(data_dir, case_id)
+
+
+def read_question_evidence(data_dir, qa_id, index):
+    from app.documents import read_citation
+
+    with closing(connect(data_dir)) as connection:
+        row = connection.execute('SELECT result_json FROM qa WHERE id=?', (qa_id,)).fetchone()
+    if row is None:
+        raise ValueError('That saved answer does not exist.')
+    sentences = json.loads(row[0])['sentences']
+    if not 0 <= index < len(sentences) or sentences[index]['citation'] is None:
+        raise ValueError('This statement has no matched supporting quote.')
+    return read_citation(data_dir, sentences[index]['citation'])

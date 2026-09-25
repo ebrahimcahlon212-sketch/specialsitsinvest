@@ -5,6 +5,7 @@ import type { ActionResult, AppState, CaseRecord, CaseDetail, DocumentView, Evid
 import Calculators from './Calculators';
 import SummaryPanel, { SubscriptionSettings } from './Summary';
 import FactsPanel from './Facts';
+import QuestionsPanel from './Questions';
 import './styles.css';
 
 function actionText(result: ActionResult) {
@@ -147,6 +148,9 @@ function CaseScreen({ record, onSaved, onBack }: { record: CaseRecord; onSaved: 
       setDocument(value); setBlockId(null); setQuote('');
     }} />
     <FactsPanel caseId={record.id} documents={detail?.documents} onChanged={refresh} onDocument={(value) => {
+      setDocument(value); setBlockId(null); setQuote('');
+    }} />
+    <QuestionsPanel caseId={record.id} documents={detail?.documents} onDocument={(value) => {
       setDocument(value); setBlockId(null); setQuote('');
     }} />
     <SecImports caseId={record.id} onChanged={refresh} onRead={(id) => openDocument(id)} />

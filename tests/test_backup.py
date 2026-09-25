@@ -17,7 +17,7 @@ from app import backup, db
 @pytest.fixture
 def research(tmp_path):
     data = tmp_path / "research"
-    db.initialize(data)
+    db.initialize(data, target_version=9)
     text = "Synthetic storage fixture; not a real filing."
     original = text.encode("utf-8")
     original_hash = hashlib.sha256(original).hexdigest()
@@ -399,3 +399,61 @@ def test_restore_rejects_a_source_snapshot_changed_while_copying(research, tmp_p
     with pytest.raises(ValueError, match="changed while being copied"):
         backup.restore_backup(earlier, destination)
     assert not destination.exists()
+
+
+def test_question_answer_backup_restore_and_export_preserve_evidence(research, tmp_path):
+    db.initialize(research, target_version=10)
+    facts_before = save_synthetic_fact_history(research)
+    with closing(db.connect(research)) as connection, connection:
+        document = connection.execute('SELECT * FROM documents WHERE id=1').fetchone()
+        text = document['canonical_text']
+        result = {'source': {'document_id': 1, 'name': document['name'], 'text_hash': document['text_hash'],
+                             'original_sha256': document['original_sha256'], 'cleaner_version': document['cleaner_version']},
+                  'passages': [{'id': 1, 'document_id': 1, 'start_offset': 0, 'end_offset': len(text),
+                                'text': text, 'heading': None, 'partial': False}],
+                  'searches': ['Synthetic storage'], 'warnings': ['Synthetic retrieval limitation'],
+                  'sentences': [{'text': text, 'status': 'quote matched', 'quote': text,
+                                 'citation': {'document_id': 1, 'text_version_id': 1,
+                                              'document_hash': document['original_sha256'], 'start_offset': 0,
+                                              'end_offset': len(text), 'quote': text}, 'detail': None}],
+                  'limitations': ['Only a synthetic fixture was reviewed'], 'prompt_version': 'synthetic-qa-1',
+                  'question': 'What does this synthetic fixture say?', 'model': 'synthetic-storage-only'}
+        connection.execute("INSERT INTO model_runs(id,case_id,task_type,request_key,request_json,source_json,snapshot_json,status,detail,created_at) "
+                           "VALUES (2,1,'qa','synthetic-qa','{}','{}','{}','completed','Synthetic Q&A storage','2026-09-22T12:00:00+00:00')")
+        connection.execute("INSERT INTO qa VALUES (7,1,2,'2026-09-22T12:00:00+00:00',?,?)",
+                           (result['question'], json.dumps(result)))
+        original = dict(connection.execute('SELECT * FROM qa').fetchone())
+    saved = snapshot(research)
+    manifest = json.loads((saved / 'manifest.json').read_text())
+    assert manifest['schema_version'] == 10 and manifest['row_counts']['qa'] == 1
+    restored = tmp_path / 'qa-restored'
+    backup.restore_backup(saved, restored)
+    with closing(db.connect(restored)) as connection:
+        assert dict(connection.execute('SELECT * FROM qa').fetchone()) == original
+        assert [dict(row) for row in connection.execute('SELECT * FROM facts ORDER BY id')] == facts_before
+        assert connection.execute('PRAGMA foreign_key_check').fetchall() == []
+        with pytest.raises(sqlite3.IntegrityError, match='immutable'):
+            connection.execute("UPDATE qa SET result_json='{}' WHERE id=7")
+    exported = backup.export_case(restored, 1, tmp_path / 'qa-export')
+    markdown = Path(exported['paths'][0]).read_text(encoding='utf-8')
+    assert 'Saved document questions and answers' in markdown and result['question'] in markdown
+    assert 'Model run: 2' in markdown and 'Answer 7' in markdown
+    assert result['limitations'][0] in markdown and result['warnings'][0] in markdown
+    assert '"quote": "Synthetic storage fixture; not a real filing."' in markdown
+    assert '"text_version_id": 1' in markdown and document['text_hash'] in markdown
+    assert 'Document answers have not been produced' not in markdown
+    assert exported['warning'] is None
+    assert 'NEVER_EXPORT_THIS_SETTING' not in markdown and 'NEVER_EXPORT_THIS_LOG' not in markdown
+
+
+def test_schema_ten_snapshot_requires_question_table(research):
+    db.initialize(research, target_version=10)
+    saved = snapshot(research)
+    with closing(sqlite3.connect(saved / 'app.db')) as connection, connection:
+        connection.execute('DROP TABLE qa')
+    def changed(manifest):
+        manifest['row_counts'].pop('qa')
+        refresh_database_entry(saved, manifest)
+    alter_manifest(saved, changed)
+    with pytest.raises(ValueError, match='required research tables'):
+        backup._validate_snapshot(saved)

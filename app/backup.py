@@ -99,6 +99,8 @@ def _database_details(path: Path) -> tuple[int, dict, dict]:
             required.update(("model_runs", "summaries"))
         if version >= 9:
             required.add('facts')
+        if version >= 10:
+            required.add('qa')
         if not required.issubset(tables):
             raise ValueError("The backup is missing required research tables.")
         references = {}
@@ -387,6 +389,11 @@ def export_case(data_dir: Path, case_id: int, destination_dir: Path) -> dict:
                 record['value'] = json.loads(record.pop('value_json'))
                 record['evidence'] = json.loads(record.pop('evidence_json'))
                 fact_records.append(record)
+        answers = []
+        if connection.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='qa'").fetchone():
+            answers = connection.execute(
+                "SELECT * FROM qa WHERE case_id=? ORDER BY id", (case_id,),
+            ).fetchall()
         sec_imports = []
         if connection.execute("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'sec_imports'").fetchone():
             sec_imports = connection.execute(
@@ -414,7 +421,16 @@ def export_case(data_dir: Path, case_id: int, destination_dir: Path) -> dict:
                 lines.extend(_json_section(f"Fact {record['id']}: {record['fact_key']}", json.dumps(record)))
         else:
             lines.extend(["No extracted facts have been saved for this case. The facts CSV contains its header only.", ""])
-        lines.extend(["Document answers have not been produced.", "", "## Document versions", ""])
+        lines.extend(["## Saved document questions and answers", ""])
+        for answer in answers:
+            lines.extend([f"### Answer {answer['id']}", "", f"Question: {_plain(answer['question'])}",
+                          f"Saved: {_plain(answer['created_at'])}", f"Model run: {answer['run_id']}", ""])
+            lines.extend(_json_section("Answer, retrieved passages, limitations and citation identities", answer['result_json']))
+        if answers:
+            lines.extend(["Answers cover only their saved retrieved passages. Quote matching checks wording, not interpretation; unresolved statements remain unresolved.", ""])
+        else:
+            lines.extend(["Document answers have not been produced.", ""])
+        lines.extend(["## Document versions", ""])
         for document in documents:
             lines.extend([f"### Document {document['id']}: {_plain(document['name'])}", ""])
             lines.extend(f"- {key.replace('_', ' ')}: {_plain(document[key])}" for key in document.keys())
@@ -473,7 +489,7 @@ def export_case(data_dir: Path, case_id: int, destination_dir: Path) -> dict:
     except Exception:
         _discard(folder, destination_dir)
         raise
-    warning = "Document answers have not been produced."
+    warnings = [] if answers else ["Document answers have not been produced."]
     if not fact_records:
-        warning += " No extracted facts have been saved; facts.csv has a header only."
-    return {"paths": [str(markdown), str(facts)], "warning": warning}
+        warnings.append("No extracted facts have been saved; facts.csv has a header only.")
+    return {"paths": [str(markdown), str(facts)], "warning": " ".join(warnings) or None}

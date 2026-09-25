@@ -642,7 +642,7 @@ def test_migration_nine_preserves_prior_run_ids_summary_links_and_backup(tmp_pat
         connection.execute("INSERT INTO summaries(id,case_id,run_id,created_at,result_json) "
                            "VALUES (12,?,41,'synthetic-date','{}')", (case["id"],))
     original_runs, original_summaries = rows(data, "model_runs"), rows(data, "summaries")
-    db.initialize(data)
+    db.initialize(data, target_version=9)
     assert rows(data, "model_runs") == original_runs
     assert rows(data, "summaries") == original_summaries
     with closing(db.connect(data)) as connection:

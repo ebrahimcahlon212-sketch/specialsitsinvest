@@ -11,7 +11,7 @@ from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, ValidationError
 
-from app.constants import MAX_SAVED_TEXT, MODEL_NAME
+from app.constants import MAX_SAVED_TEXT, MODEL_NAME, QUESTION_MAX_CHARS
 from app.db import DATA_LOCK, check_search, connect, initialize
 from app import cases
 from app.calc import Quantity
@@ -505,6 +505,47 @@ class FactCoverage(BaseModel):
     key_passages: dict[str, list[int]]
 
 
+class QuestionInput(BaseModel):
+    model_config = ConfigDict(extra='forbid', strict=True)
+    case_id: int = Field(gt=0)
+    document_id: int = Field(gt=0)
+    question: str = Field(min_length=1, max_length=QUESTION_MAX_CHARS)
+
+
+class QuestionEvidenceInput(BaseModel):
+    model_config = ConfigDict(extra='forbid', strict=True)
+    qa_id: int = Field(gt=0)
+    index: int = Field(ge=0, le=7)
+
+
+class QuestionAnswer(BaseModel):
+    id: int
+    case_id: int
+    run_id: int
+    created_at: str
+    question: str
+    source: FactSource
+    passages: list[FactPassage]
+    searches: list[str]
+    warnings: list[str]
+    sentences: list[SummaryStatement]
+    limitations: list[str]
+    prompt_version: str
+    stale: bool
+    stale_reason: str | None
+
+
+class QuestionStateResult(BaseModel):
+    case_id: int | None = None
+    selected_document_id: int | None = None
+    sources: list[FactSource] = Field(default_factory=list)
+    answers: list[QuestionAnswer] = Field(default_factory=list)
+    runs: list[ModelRun] = Field(default_factory=list)
+    active: bool = False
+    detail: str | None = None
+    error: str | None = None
+
+
 class FactStateResult(BaseModel):
     selected_document_id: int | None = None
     source: FactSource | None = None
@@ -576,6 +617,34 @@ class Bridge:
             return SummaryStateResult(**cases.summary_status(self._data_dir, value.case_id)).model_dump()
         except Exception as error:
             return SummaryStateResult(error=_failure(error, 'Read summary')).model_dump()
+
+    def question_status(self, request: dict) -> dict:
+        try:
+            value = CaseIdInput.model_validate(request)
+            return QuestionStateResult(**cases.question_status(self._data_dir, value.case_id)).model_dump()
+        except Exception as error:
+            return QuestionStateResult(error=_failure(error, 'Read document questions')).model_dump()
+
+    def ask_question(self, request: dict) -> dict:
+        try:
+            value = QuestionInput.model_validate(request)
+            return QuestionStateResult(**cases.ask_question(self._data_dir, **value.model_dump())).model_dump()
+        except Exception as error:
+            return QuestionStateResult(error=_failure(error, 'Ask document question')).model_dump()
+
+    def cancel_question(self, request: dict) -> dict:
+        try:
+            value = CaseIdInput.model_validate(request)
+            return QuestionStateResult(**cases.cancel_question(self._data_dir, value.case_id)).model_dump()
+        except Exception as error:
+            return QuestionStateResult(error=_failure(error, 'Cancel document question')).model_dump()
+
+    def read_question_evidence(self, request: dict) -> dict:
+        try:
+            value = QuestionEvidenceInput.model_validate(request)
+            return DocumentResult(document=cases.read_question_evidence(self._data_dir, **value.model_dump())).model_dump()
+        except Exception as error:
+            return DocumentResult(error=_failure(error, 'Read answer quotation')).model_dump()
 
     def set_summary_source(self, request: dict) -> dict:
         try:

@@ -434,6 +434,36 @@ def retrieve_fact_passages(data_dir: Path, case_id: int, document_id: int,
     if not queries or any(not phrases or any(not isinstance(value, str) or not value.strip()
                                              for value in phrases) for phrases in queries.values()):
         raise ValueError('Each fact key requires nonempty fixed search phrases.')
+    budgets = {key: (constants.FACT_FINANCIAL_RETRIEVAL_CHARS if key in constants.FACT_FINANCIAL_KEYS
+                     else constants.FACT_RETRIEVAL_CHARS) for key in queries}
+    return _retrieve_passages(data_dir, case_id, document_id, queries, budgets,
+                              constants.FACT_RETRIEVAL_HITS)
+
+
+def retrieve_question_passages(data_dir: Path, case_id: int, document_id: int, question: str) -> dict:
+    """Retrieve literal question words from one selected version, without model rewriting."""
+    if not isinstance(question, str) or not question.strip():
+        raise ValueError('Enter a question before retrieving evidence.')
+    words = list(dict.fromkeys(word for word in re.findall(r'[^\W_]+', question.casefold())
+                               if word not in constants.QUESTION_STOP_WORDS))
+    # Every token is quoted: user punctuation and FTS operators are never executed.
+    terms = tuple('"' + word + '"' for word in words[:constants.QUESTION_RETRIEVAL_TERMS])
+    result = _retrieve_passages(data_dir, case_id, document_id, {'question': terms},
+                               {'question': constants.QUESTION_RETRIEVAL_CHARS},
+                               constants.QUESTION_RETRIEVAL_PASSAGES,
+                               constants.QUESTION_RETRIEVAL_PASSAGES)
+    result.pop('key_passages')
+    result['searches'] = list(terms)
+    if len(words) > constants.QUESTION_RETRIEVAL_TERMS:
+        result['warnings'].append('Only the first bounded set of distinct searchable question words was used.')
+    if not terms:
+        result['warnings'].append('The question contains no searchable words after removing common question words.')
+    result['warnings'].append('Question words are searched literally with OR; wording that differs from the filing can miss evidence.')
+    return result
+
+
+def _retrieve_passages(data_dir, case_id, document_id, queries, budgets, hit_limit, passage_limit=None):
+    """Shared selected-version checks and canonical context for facts and questions."""
     with closing(db.connect(data_dir)) as connection:
         row = connection.execute('SELECT * FROM documents WHERE id = ? AND case_id = ?',
                                  (document_id, case_id)).fetchone()
@@ -464,13 +494,16 @@ def retrieve_fact_passages(data_dir: Path, case_id: int, document_id: int,
         hits = {}
         searches = {key: list(phrases) for key, phrases in queries.items()}
         for key, phrases in queries.items():
+            if not phrases:
+                hits[key] = []
+                continue
             expressions = [value if value.startswith('"') else '"' + value.replace('"', '""') + '"' for value in phrases]
             expression = 'text : (' + ' OR '.join('(' + value + ')' for value in expressions) + ')'
             hits[key] = connection.execute(
                 'SELECT b.* FROM blocks_fts JOIN blocks b ON b.id = blocks_fts.rowid '
                 'WHERE blocks_fts MATCH ? AND b.document_id = ? '
                 'ORDER BY bm25(blocks_fts), b.id LIMIT ?',
-                (expression, document_id, constants.FACT_RETRIEVAL_HITS),
+                (expression, document_id, hit_limit),
             ).fetchall()
         source = {key: row[key] for key in ('name', 'cleaner_version', 'text_hash', 'original_sha256',
                                             'filing_date', 'accession_number')}
@@ -493,11 +526,10 @@ def retrieve_fact_passages(data_dir: Path, case_id: int, document_id: int,
         if not found:
             warnings.append(key + ': no matching indexed text was found for the fixed searches; absence from the filing is not established.')
             continue
-        budget = (constants.FACT_FINANCIAL_RETRIEVAL_CHARS if key in constants.FACT_FINANCIAL_KEYS
-                  else constants.FACT_RETRIEVAL_CHARS)
         for hit in found:
-            ranges, notes = _fact_ranges(text, hit, queries[key], tables, budget // len(found))
+            ranges, notes = _fact_ranges(text, hit, queries[key], tables, budgets[key] // len(found))
             warnings.extend(key + ': ' + note for note in notes)
+            prepared = []
             for start, end, partial in ranges:
                 while start < end and text[start].isspace():
                     start += 1
@@ -505,6 +537,12 @@ def retrieve_fact_passages(data_dir: Path, case_id: int, document_id: int,
                     end -= 1
                 if start == end:
                     continue
+                prepared.append((start, end, partial))
+            new_ranges = {(start, end) for start, end, _ in prepared if (start, end) not in by_range}
+            if passage_limit is not None and len(passages) + len(new_ranges) > passage_limit:
+                warnings.append('The passage limit omitted a search hit and its context; separate table headers were not detached from their rows.')
+                continue
+            for start, end, partial in prepared:
                 identity = (start, end)
                 if identity not in by_range:
                     by_range[identity] = len(passages) + 1

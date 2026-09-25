@@ -67,6 +67,11 @@ export type FactState = { selected_document_id: number | null; source: FactSourc
 export type FactCorrection = { case_id: number; key: string; previous_id: number | null; value: string | null;
   unit: string | null; currency: string | null; entity: string | null; period: string | null; basis: FactRecord['basis'];
   kind: FactRecord['kind']; qualifications: string | null; reason: string; document_id: number | null; quote: string | null };
+export type QuestionAnswer = { id: number; case_id: number; run_id: number; created_at: string; question: string;
+  source: FactSource; passages: FactCoverage['passages']; searches: unknown[]; warnings: string[];
+  sentences: SummaryStatement[]; limitations: string[]; prompt_version: string; stale: boolean; stale_reason: string | null };
+export type QuestionState = { case_id: number; selected_document_id: number | null; sources: FactSource[];
+  active: boolean; detail: string | null; error: string | null; answers: QuestionAnswer[]; runs: ModelRun[] };
 type Failure = { error: string | null };
 type Bridge = {
   read_text(request: EmptyInput): Promise<TextResult>;
@@ -110,6 +115,10 @@ type Bridge = {
   read_fact_evidence(request: { fact_id: number; index: number }): Promise<{ document: DocumentView | null } & Failure>;
   check_fact(request: CaseIdInput & { fact_id: number; reason: string }): Promise<FactState>;
   correct_fact(request: FactCorrection): Promise<FactState>;
+  question_status(request: CaseIdInput): Promise<QuestionState>;
+  ask_question(request: CaseIdInput & { document_id: number; question: string }): Promise<QuestionState>;
+  cancel_question(request: CaseIdInput): Promise<QuestionState>;
+  read_question_evidence(request: { qa_id: number; index: number }): Promise<{ document: DocumentView | null } & Failure>;
 };
 
 declare global { interface Window { pywebview?: { api?: Bridge } } }
@@ -188,3 +197,11 @@ export async function readFactEvidence(fact_id: number, index: number) {
 }
 export async function checkFact(case_id: number, fact_id: number, reason: string) { return (await bridgeReady).check_fact({ case_id, fact_id, reason }); }
 export async function correctFact(request: FactCorrection) { return (await bridgeReady).correct_fact(request); }
+export async function questionStatus(case_id: number) { return (await bridgeReady).question_status({ case_id }); }
+export async function askQuestion(case_id: number, document_id: number, question: string) {
+  return checked(await (await bridgeReady).ask_question({ case_id, document_id, question }));
+}
+export async function cancelQuestion(case_id: number) { return checked(await (await bridgeReady).cancel_question({ case_id })); }
+export async function readQuestionEvidence(qa_id: number, index: number) {
+  return present(checked(await (await bridgeReady).read_question_evidence({ qa_id, index })).document);
+}

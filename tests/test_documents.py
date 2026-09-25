@@ -1,4 +1,4 @@
-"""Synthetic structural checks only; no real filing or live service is represented."""
+"""Labelled synthetic checks and saved real filing retrieval; no live service calls."""
 
 import hashlib
 import json
@@ -71,15 +71,6 @@ def test_sgml_wrapped_html_keeps_filing_body_search_and_highlights(local_case):
     assert 'script' not in result['html']
 
 
-def test_table_highlight_does_not_move_whitespace_outside_cells():
-    markup = ('<p>Synthetic prefix.</p><table><tr><td><p>Question?</p></td>\n'
-              '<td><p>fractional shares</p></td></tr></table>')
-    text = documents.canonical_text(markup)
-    marked = documents._highlight(markup, text, text.index('Question?'), len(text))
-    assert documents.canonical_text(marked) == text
-    assert '<mark>fractional shares</mark>' in marked
-
-
 @pytest.mark.parametrize('empty_ends', ['', '<p> </p><table><tr><td> </td></tr></table>'])
 def test_table_highlight_does_not_move_whitespace_outside_cells(empty_ends):
     markup = ('<p>Synthetic prefix.</p><table><tr><td><p>Question?</p></td>\n'
@@ -91,6 +82,7 @@ def test_table_highlight_does_not_move_whitespace_outside_cells(empty_ends):
     marked = documents._highlight(markup, text, text.index('Question?'), len(text))
     assert documents.canonical_text(marked) == text
     assert '<mark>fractional shares</mark>' in marked
+
 
 @pytest.mark.parametrize('quote', ['quoted phrase', 'quoted'])
 def test_highlight_keeps_trailing_mixed_node_whitespace(quote):
@@ -318,3 +310,77 @@ def test_clean_html_hash_and_path_escape_are_rejected(local_case):
         documents.read_document(data_dir, saved['id'])
     with pytest.raises(ValueError, match='outside'):
         documents._stored_path(data_dir, '../outside')
+
+
+def test_question_terms_are_literal_and_only_selected_version_is_used(local_case):
+    data_dir, _ = local_case
+    old = documents.store_document(data_dir, 1, b'<p>Synthetic Alpha original gamma delta.</p>',
+                                   'Synthetic old', 'text/html', logical_document_id='synthetic-question')
+    documents.store_document(data_dir, 1, b'<p>Synthetic Alpha later-amendment.</p>',
+                             'Synthetic later', 'text/html', logical_document_id='synthetic-question')
+    documents.store_document(data_dir, 2, b'<p>Synthetic Alpha other-case.</p>',
+                             'Synthetic other', 'text/html', logical_document_id='synthetic-other')
+    result = documents.retrieve_question_passages(data_dir, 1, old['id'],
+                                                 'What are "Alpha": NOT (gamma* OR ^delta) [shares]?')
+    assert result['searches'] == ['"alpha"', '"not"', '"gamma"', '"delta"', '"shares"']
+    assert result['source']['document_id'] == old['id']
+    assert result['passages'] and all(p['document_id'] == old['id'] for p in result['passages'])
+    text = '\n'.join(p['text'] for p in result['passages'])
+    assert 'original' in text and 'later-amendment' not in text and 'other-case' not in text
+
+
+def test_question_no_hit_is_valid_but_missing_index_or_wrong_case_is_not(local_case):
+    data_dir, source = local_case
+    saved = documents.import_local(data_dir, 1, source)
+    for question in ('Zyzzyvaquux', '() : "*', 'What is it?'):
+        result = documents.retrieve_question_passages(data_dir, 1, saved['id'], question)
+        assert result['passages'] == [] and result['source']['document_id'] == saved['id']
+        assert any('absence from the filing is not established' in note for note in result['warnings'])
+    with pytest.raises(ValueError, match='does not belong'):
+        documents.retrieve_question_passages(data_dir, 2, saved['id'], 'Alpha?')
+    with closing(db.connect(data_dir)) as connection, connection:
+        connection.execute("INSERT INTO blocks_fts(blocks_fts) VALUES ('delete-all')")
+    with pytest.raises(ValueError, match='index is incomplete'):
+        documents.retrieve_question_passages(data_dir, 1, saved['id'], 'Zyzzyvaquux')
+
+
+def test_question_table_context_keeps_headers_and_obeys_total_limits(local_case):
+    data_dir, source = local_case
+    rows = '<tr><td>Unrelated synthetic row ' + 'context ' * 30 + '</td><td>20</td></tr>'
+    source.write_text(''.join('<h2>Synthetic company ' + str(index) + '</h2><p>USD millions.</p>'
+                             '<table><tr><th>Metric</th><th>Year ended 2024</th></tr>' + rows * 50
+                             + '<tr><td>Target revenue</td><td>125</td></tr></table>'
+                             for index in range(6)), encoding='utf-8')
+    saved = documents.import_local(data_dir, 1, source)
+    result = documents.retrieve_question_passages(data_dir, 1, saved['id'], 'Target revenue?')
+    assert 1 <= len(result['passages']) <= 6
+    assert sum(len(p['text']) for p in result['passages']) <= 24_000
+    text = '\n'.join(p['text'] for p in result['passages'])
+    assert 'Target revenue' in text and 'USD millions' in text and 'Year ended 2024' in text
+    assert any('passage limit omitted' in note for note in result['warnings'])
+    canonical = documents.read_document(data_dir, saved['id'])['canonical_text']
+    for passage in result['passages']:
+        assert passage['text'] == canonical[passage['start_offset']:passage['end_offset']]
+        assert passage['partial']
+
+
+def test_question_saved_sandisk_passages_keep_source_hash_and_clickable_offsets(local_case):
+    data_dir, _ = local_case
+    source = Path(__file__).parent / 'fixtures' / 'sandisk_20241220_d835366dex991.htm'
+    saved = documents.import_local(data_dir, 1, source)
+    result = documents.retrieve_question_passages(data_dir, 1, saved['id'],
+                                                 'What happens to fractional shares?')
+    assert result['source']['original_sha256'] == hashlib.sha256(source.read_bytes()).hexdigest()
+    assert 1 <= len(result['passages']) <= 6
+    assert sum(len(p['text']) for p in result['passages']) <= 24_000
+    canonical = documents.read_document(data_dir, saved['id'])['canonical_text']
+    for passage in result['passages']:
+        assert passage['text'] == canonical[passage['start_offset']:passage['end_offset']]
+    passage = next(p for p in result['passages'] if 'fractional shares' in p['text'])
+    quote = 'fractional shares'
+    start = passage['start_offset'] + passage['text'].index(quote)
+    opened = documents.read_citation(data_dir, {'document_id': saved['id'],
+        'text_version_id': saved['id'], 'document_hash': result['source']['original_sha256'],
+        'quote': quote, 'start_offset': start, 'end_offset': start + len(quote), 'status': 'quote matched'})
+    assert opened['citation']['text_version_id'] == saved['id']
+    assert '<mark>fractional shares</mark>' in opened['html']
