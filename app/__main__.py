@@ -74,8 +74,9 @@ def create_app_window(data_dir: Path):
     )
     bridge._window = window
     from app.cases import cancel_summaries_on_close
+    from app.research import cancel_on_close
 
-    window.events.closing += lambda: cancel_summaries_on_close(data_dir)
+    window.events.closing += lambda: all((cancel_summaries_on_close(data_dir), cancel_on_close(data_dir)))
     return window
 
 

@@ -78,6 +78,22 @@ export type QuestionAnswer = { id: number; case_id: number; run_id: number; crea
   sentences: SummaryStatement[]; limitations: string[]; prompt_version: string; stale: boolean; stale_reason: string | null };
 export type QuestionState = { case_id: number; selected_document_id: number | null; sources: FactSource[];
   active: boolean; detail: string | null; error: string | null; answers: QuestionAnswer[]; runs: ModelRun[] };
+export type ResearchCollection = { url: string; checked_at: string; request_count: number; cancelled: boolean;
+  documents: { document_id: number; name: string | null; source_url: string; status: string }[]; gaps: string[] };
+export type ReviewSource = { document_id: number; name: string | null; total_chars: number;
+  source_url?: string | null; filing_date?: string | null; original_sha256?: string; text_hash?: string };
+export type ReviewPlan = { plan_key: string; document_ids: number[]; sources: ReviewSource[];
+  batches: { index: number; document_id: number; start_offset: number; end_offset: number;
+    characters: number; cached: boolean; status: string }[];
+  batch_count: number; cached_batches: number; max_new_requests: number; total_chars: number;
+  allowed: boolean; warnings: string[]; blockers: string[]; model: string; effort: string; deadline_seconds: number };
+export type ReviewReport = { id: number; created_at: string; model: string; effort: string; prompt_version: string;
+  items: (SummaryStatement & { section: string })[];
+  coverage: { document_id: number; name: string | null; total_chars: number; reviewed_chars: number; status: string }[];
+  warnings: string[]; usage: unknown[]; stale: boolean; stale_reasons: string[] };
+export type ResearchState = { state_valid: boolean; selected_document_ids: number[]; active: boolean; phase: 'collecting' | 'reviewing' | null;
+  detail: string | null; error: string | null; collection: ResearchCollection | null;
+  plan: ReviewPlan | null; report: ReviewReport | null; runs: ModelRun[] };
 type Failure = { error: string | null };
 type Bridge = {
   read_text(request: EmptyInput): Promise<TextResult>;
@@ -125,6 +141,12 @@ type Bridge = {
   ask_question(request: CaseIdInput & { document_id: number; question: string }): Promise<QuestionState>;
   cancel_question(request: CaseIdInput): Promise<QuestionState>;
   read_question_evidence(request: { qa_id: number; index: number }): Promise<{ document: DocumentView | null } & Failure>;
+  research_status(request: CaseIdInput): Promise<ResearchState>;
+  collect_research_sources(request: CaseIdInput & { url: string }): Promise<ResearchState>;
+  prepare_research(request: CaseIdInput & { document_ids: number[] }): Promise<{ plan: ReviewPlan | null } & Failure>;
+  start_research(request: CaseIdInput & { document_ids: number[]; plan_key: string }): Promise<ResearchState>;
+  cancel_research(request: CaseIdInput): Promise<ResearchState>;
+  read_research_evidence(request: { report_id: number; index: number }): Promise<{ document: DocumentView | null } & Failure>;
 };
 
 declare global { interface Window { pywebview?: { api?: Bridge } } }
@@ -210,4 +232,22 @@ export async function askQuestion(case_id: number, document_id: number, question
 export async function cancelQuestion(case_id: number) { return checked(await (await bridgeReady).cancel_question({ case_id })); }
 export async function readQuestionEvidence(qa_id: number, index: number) {
   return present(checked(await (await bridgeReady).read_question_evidence({ qa_id, index })).document);
+}
+function researchState(result: ResearchState): ResearchState {
+  if (!result.state_valid) throw new Error(result.error ?? 'Investigation state could not be read. Work may still be active.');
+  return result;
+}
+export async function researchStatus(case_id: number) { return researchState(await (await bridgeReady).research_status({ case_id })); }
+export async function collectResearchSources(case_id: number, url: string) {
+  return researchState(await (await bridgeReady).collect_research_sources({ case_id, url }));
+}
+export async function prepareResearch(case_id: number, document_ids: number[]) {
+  return present(checked(await (await bridgeReady).prepare_research({ case_id, document_ids })).plan);
+}
+export async function startResearch(case_id: number, document_ids: number[], plan_key: string) {
+  return researchState(await (await bridgeReady).start_research({ case_id, document_ids, plan_key }));
+}
+export async function cancelResearch(case_id: number) { return researchState(await (await bridgeReady).cancel_research({ case_id })); }
+export async function readResearchEvidence(report_id: number, index: number) {
+  return present(checked(await (await bridgeReady).read_research_evidence({ report_id, index })).document);
 }

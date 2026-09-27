@@ -275,6 +275,34 @@ def test_export_preserves_decimal_text_and_decision_evidence_without_settings_or
     assert markdown.read_text(encoding="utf-8") == content
 
 
+def test_review_history_survives_backup_restore_and_exports_only_finished_reports(research, tmp_path):
+    # Synthetic storage records test preservation, not model interpretation.
+    db.initialize(research, target_version=11)
+    with closing(db.connect(research)) as connection, connection:
+        for identity, phase in ((41, 'batch'), (42, 'report')):
+            connection.execute(
+                "INSERT INTO model_runs(id,case_id,task_type,request_key,request_json,source_json,snapshot_json,"
+                "status,detail,created_at) VALUES (?,1,'review',?,'{}','{}','{}','completed','Synthetic review','created')",
+                (identity, f'synthetic-{identity}'))
+            value = {'items': [{'text': f'Synthetic {phase} result', 'status': 'unresolved', 'citation': None}],
+                     'coverage': [{'document_id': 1, 'status': 'reviewed'}], 'warnings': ['Synthetic test only']}
+            connection.execute('INSERT INTO review_results VALUES (?,1,?,?,?, ?,?)',
+                               (identity, identity, 'synthetic-plan', phase, 'created', json.dumps(value)))
+        original = [tuple(row) for row in connection.execute('SELECT * FROM review_results ORDER BY id')]
+    saved = Path(backup.create_backup(research)['path'])
+    destination = tmp_path / 'restored-review'
+    destination.mkdir()
+    assert backup.restore_backup(saved, destination)['schema_version'] == 11
+    with closing(db.connect(destination)) as connection:
+        assert [tuple(row) for row in connection.execute('SELECT * FROM review_results ORDER BY id')] == original
+        assert connection.execute('PRAGMA foreign_key_check').fetchall() == []
+    output = backup.export_case(destination, 1, tmp_path / 'review-export')
+    text = Path(output['paths'][0]).read_text(encoding='utf-8')
+    assert 'Synthetic report result' in text and 'Synthetic batch result' not in text
+    assert 'citation' in text and 'coverage' in text and 'Synthetic test only' in text
+    assert 'NEVER_EXPORT_THIS_SETTING' not in text
+
+
 def save_synthetic_fact_history(data):
     """Storage fixture only: these are not validated financial observations."""
     value = {'value': '0.100000000000000000001', 'unit': 'GBP', 'currency': 'GBP',

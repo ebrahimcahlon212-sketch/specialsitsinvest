@@ -440,6 +440,81 @@ class SubscriptionStateResult(BaseModel):
     error: str | None = None
 
 
+class ResearchSelectionInput(BaseModel):
+    model_config = ConfigDict(extra='forbid', strict=True)
+    case_id: int = Field(gt=0)
+    document_ids: list[int] = Field(min_length=1, max_length=12)
+
+    @model_validator(mode='after')
+    def valid_documents(self):
+        if any(identity <= 0 for identity in self.document_ids) or len(set(self.document_ids)) != len(self.document_ids):
+            raise ValueError('Select distinct saved document versions.')
+        return self
+
+
+class ResearchEvidenceInput(BaseModel):
+    model_config = ConfigDict(extra='forbid', strict=True)
+    report_id: int = Field(gt=0)
+    index: int = Field(ge=0)
+
+
+class ResearchStartInput(ResearchSelectionInput):
+    plan_key: str = Field(min_length=64, max_length=64)
+
+
+class ResearchPlan(BaseModel):
+    plan_key: str
+    document_ids: list[int]
+    sources: list[dict[str, Any]]
+    batches: list[dict[str, Any]]
+    batch_count: int
+    cached_batches: int
+    max_new_requests: int
+    total_chars: int
+    allowed: bool
+    warnings: list[str]
+    blockers: list[str]
+    model: str
+    effort: str
+    deadline_seconds: int
+
+
+class ResearchItem(SummaryStatement):
+    section: str
+
+
+class ResearchReport(BaseModel):
+    id: int
+    created_at: str
+    model: str
+    effort: str
+    prompt_version: str
+    items: list[ResearchItem]
+    coverage: list[dict[str, Any]]
+    warnings: list[str]
+    usage: list[dict[str, Any]]
+    stale: bool
+    stale_reasons: list[str]
+
+
+class ResearchPlanResult(BaseModel):
+    plan: ResearchPlan | None = None
+    error: str | None = None
+
+
+class ResearchStateResult(BaseModel):
+    state_valid: bool = True
+    active: bool = False
+    phase: Literal['collecting', 'reviewing'] | None = None
+    detail: str | None = None
+    error: str | None = None
+    collection: dict[str, Any] | None = None
+    plan: ResearchPlan | None = None
+    report: ResearchReport | None = None
+    runs: list[ModelRun] = Field(default_factory=list)
+    selected_document_ids: list[int] = Field(default_factory=list)
+
+
 class FactSourceInput(BaseModel):
     model_config = ConfigDict(extra="forbid", strict=True)
     case_id: int = Field(gt=0)
@@ -648,6 +723,60 @@ class Bridge:
     def __init__(self, data_dir: Path):
         self._data_dir = data_dir
         self._window = None
+
+    def research_status(self, request: dict) -> dict:
+        from app import research
+
+        try:
+            value = CaseIdInput.model_validate(request)
+            return ResearchStateResult(**research.status(self._data_dir, value.case_id)).model_dump()
+        except Exception as error:
+            return ResearchStateResult(state_valid=False, error=_failure(error, 'Read investigation')).model_dump()
+
+    def collect_research_sources(self, request: dict) -> dict:
+        from app import research
+
+        try:
+            value = SecImportInput.model_validate(request)
+            return ResearchStateResult(**research.collect(self._data_dir, value.case_id, value.url)).model_dump()
+        except Exception as error:
+            return ResearchStateResult(state_valid=False, error=_failure(error, 'Find research documents')).model_dump()
+
+    def prepare_research(self, request: dict) -> dict:
+        from app import research
+
+        try:
+            value = ResearchSelectionInput.model_validate(request)
+            return ResearchPlanResult(plan=research.prepare(self._data_dir, **value.model_dump())).model_dump()
+        except Exception as error:
+            return ResearchPlanResult(error=_failure(error, 'Preview investigation')).model_dump()
+
+    def start_research(self, request: dict) -> dict:
+        from app import research
+
+        try:
+            value = ResearchStartInput.model_validate(request)
+            return ResearchStateResult(**research.start(self._data_dir, **value.model_dump())).model_dump()
+        except Exception as error:
+            return ResearchStateResult(state_valid=False, error=_failure(error, 'Start investigation')).model_dump()
+
+    def cancel_research(self, request: dict) -> dict:
+        from app import research
+
+        try:
+            value = CaseIdInput.model_validate(request)
+            return ResearchStateResult(**research.cancel(self._data_dir, value.case_id)).model_dump()
+        except Exception as error:
+            return ResearchStateResult(state_valid=False, error=_failure(error, 'Cancel investigation')).model_dump()
+
+    def read_research_evidence(self, request: dict) -> dict:
+        from app import research
+
+        try:
+            value = ResearchEvidenceInput.model_validate(request)
+            return DocumentResult(document=research.read_evidence(self._data_dir, **value.model_dump())).model_dump()
+        except Exception as error:
+            return DocumentResult(error=_failure(error, 'Read investigation quotation')).model_dump()
 
     def summary_status(self, request: dict) -> dict:
         try:

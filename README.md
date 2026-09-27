@@ -61,6 +61,10 @@ Summaries, deal terms and document answers require an installed Codex client and
 
 Use **Settings > Check connection** before a request. Under **Case briefing**, select up to six documents and click **Generate case briefing** or **Refresh case briefing**. Expand **Supporting quotation** and click **Open quoted passage** to inspect evidence. Generation runs only when requested. The model process has broad read-only filesystem access; it is not isolated to a document folder. Supported optional tools and connectors are disabled, but universal prevention of tool execution has not been established.
 
+For a longer review, open **Investigate case**, paste an official company or deal URL and click **Find documents**. Check the saved documents and any collection gaps, then select the versions to use. The collector checks direct links on the same site; it does not search the whole web or accept access terms. Use the existing SEC importer for SEC URLs.
+
+Click **Preview full review** to see the text coverage and maximum number of subscription requests, then **Review documents**. Completed matching batches are reused. **Cancel** stops further batches; use a fresh preview and **Continue review** to resume. The saved report separates source claims, AI interpretation and unresolved questions. Open a supporting quotation to see its highlighted passage. A full review of selected extracted text does not establish that every relevant document was found.
+
 ## Development
 
 The interface uses React, TypeScript and Mantine. Python handles storage, document processing and Decimal calculations. The interface calls Python through the pywebview bridge; there is no separate backend service.

@@ -528,6 +528,72 @@ def retrieve_question_passages(data_dir: Path, case_id: int, document_id: int, q
     return result
 
 
+def plan_review_passages(data_dir: Path, case_id: int, document_id: int) -> dict:
+    """Partition every canonical character; overlap and table context are additional."""
+    with closing(db.connect(data_dir)) as connection:
+        row = connection.execute('SELECT * FROM documents WHERE id=? AND case_id=?',
+                                 (document_id, case_id)).fetchone()
+        if row is None or not row['canonical_text'] or row['processing_error']:
+            raise ValueError('A selected document has missing or failed searchable text.')
+        blocks = connection.execute('SELECT * FROM blocks WHERE document_id=? ORDER BY start_offset',
+                                    (document_id,)).fetchall()
+    document = read_document(data_dir, document_id)
+    text = document['canonical_text']
+    soup = BeautifulSoup(document['html'], 'lxml')
+    walked, _, bounds = _walk(soup)
+    if walked != text or any(value['text'] != text[value['start_offset']:value['end_offset']] for value in blocks):
+        raise ValueError('Saved blocks or clean HTML disagree with canonical text. Review stopped.')
+    tables = [(bounds[id(tag)], tag) for tag in soup.find_all('table') if tag.find_parent('table') is None]
+    warnings = list(dict.fromkeys(re.findall(r'\[Extraction notice:[^\]]*\]', text)))
+    if row['cleaner_version'].startswith('pdf-'):
+        warnings.append('PDF text may lose images, table columns and units. Supplying every extracted character does not verify the original pages.')
+    source = {key: row[key] for key in ('name', 'source_url', 'filing_date', 'form_type',
+              'original_sha256', 'text_hash', 'cleaner_version', 'logical_document_id')}
+    source.update(document_id=document_id, total_chars=len(text))
+    batches, start = [], 0
+    while start < len(text):
+        end = min(len(text), start + constants.REVIEW_BATCH_CHARS)
+        if end < len(text):
+            boundaries = [value['end_offset'] for value in blocks
+                          if start + constants.REVIEW_BATCH_CHARS // 2 < value['end_offset'] <= end]
+            end = max(boundaries, default=end)
+        left = max(0, start - constants.REVIEW_OVERLAP_CHARS)
+        passages = [{'document_id': document_id, 'start_offset': left, 'end_offset': end,
+                     'text': text[left:end], 'heading': 'Consecutive source text', 'partial': False}]
+        notes = []
+        for (table_start, table_end), tag in tables:
+            if table_start < end and table_end > left and not (left <= table_start and end >= table_end):
+                context_start = max(0, table_start - 400)
+                room = constants.REVIEW_TABLE_CONTEXT_CHARS
+                header = tag.find('thead')
+                context_end = min(table_end, context_start + room)
+                if header is not None and bounds[id(header)][1] <= context_start + room:
+                    context_end = max(context_end, bounds[id(header)][1])
+                if not (left <= context_start and context_end <= end):
+                    passages.append({'document_id': document_id, 'start_offset': context_start,
+                        'end_offset': context_end, 'text': text[context_start:context_end],
+                        'heading': 'Table opening and available headings', 'partial': True})
+                notes.append('This batch splits a table. Its opening is repeated, but headings may still be incomplete; do not infer missing column context.')
+                passages[0]['partial'] = True
+                break
+        batches.append({'start_offset': start, 'end_offset': end,
+                        'passages': passages, 'warnings': notes})
+        start = end
+    return {'source': source, 'batches': batches, 'warnings': warnings}
+
+
+def retrieve_review_verification(data_dir: Path, document_id: int, character_limit: int) -> dict:
+    """Check selected financial and deadline terms without treating a miss as absence."""
+    with closing(db.connect(data_dir)) as connection:
+        row = connection.execute('SELECT case_id FROM documents WHERE id=?', (document_id,)).fetchone()
+    if row is None:
+        raise ValueError('The selected review document no longer exists.')
+    weights = constants.REVIEW_VERIFICATION_WEIGHTS
+    budgets = {key: character_limit * weight // sum(weights.values()) for key, weight in weights.items()}
+    return _retrieve_passages(data_dir, row['case_id'], document_id,
+                              constants.REVIEW_VERIFICATION_QUERIES, budgets, 2)
+
+
 def retrieve_summary_passages(data_dir: Path, case_id: int, document_id: int) -> dict:
     """Opening context plus bounded full-text searches in one immutable source."""
     limit = min(constants.SUMMARY_MAX_CHARS, constants.SUMMARY_DOCUMENT_CHARS)

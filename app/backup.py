@@ -101,6 +101,8 @@ def _database_details(path: Path) -> tuple[int, dict, dict]:
             required.add('facts')
         if version >= 10:
             required.add('qa')
+        if version >= 11:
+            required.add('review_results')
         if not required.issubset(tables):
             raise ValueError("The backup is missing required research tables.")
         references = {}
@@ -394,6 +396,10 @@ def export_case(data_dir: Path, case_id: int, destination_dir: Path) -> dict:
             answers = connection.execute(
                 "SELECT * FROM qa WHERE case_id=? ORDER BY id", (case_id,),
             ).fetchall()
+        reviews = []
+        if connection.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='review_results'").fetchone():
+            reviews = connection.execute("SELECT * FROM review_results WHERE case_id=? AND phase='report' ORDER BY id",
+                                         (case_id,)).fetchall()
         sec_imports = []
         if connection.execute("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'sec_imports'").fetchone():
             sec_imports = connection.execute(
@@ -430,6 +436,13 @@ def export_case(data_dir: Path, case_id: int, destination_dir: Path) -> dict:
             lines.extend(["Answers cover only their saved retrieved passages. Quote matching checks wording, not interpretation; unresolved statements remain unresolved.", ""])
         else:
             lines.extend(["Document answers have not been produced.", ""])
+        lines.extend(["## Saved investigations", ""])
+        for review in reviews:
+            lines.extend([f"### Investigation {review['id']}", "", f"Saved: {_plain(review['created_at'])}",
+                          f"Model run: {review['run_id']}", ""])
+            lines.extend(_json_section("Findings, source coverage and citation identities", review['result_json']))
+        lines.extend(["Coverage describes the saved document text supplied to the model, not proof that all public information was obtained or interpreted correctly. Earlier investigations remain historical records.", ""]
+                     if reviews else ["No completed investigation has been saved. Partial or interrupted runs are not a completed report.", ""])
         lines.extend(["## Document versions", ""])
         for document in documents:
             lines.extend([f"### Document {document['id']}: {_plain(document['name'])}", ""])

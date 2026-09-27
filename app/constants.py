@@ -94,6 +94,24 @@ FACT_BATCHES = (
      'conditions_to_distribution','tax_free_condition','management_equity_awards'),
     ('pro_forma_revenue','pro_forma_operating_income','pro_forma_ebitda'),
 )
+REVIEW_BATCH_CHARS = 36000
+REVIEW_OVERLAP_CHARS = 800
+REVIEW_TABLE_CONTEXT_CHARS = 3000
+REVIEW_MAX_BATCHES = 40
+REVIEW_MAX_DOCUMENTS = 12
+REVIEW_CONTEXT_CHARS = 40000
+REVIEW_SYNTHESIS_CHARS = 140000
+REVIEW_PLANNER_VERSION = 'full-text-1'
+REVIEW_VERIFICATION_VERSION = 'financial-deadline-1'
+REVIEW_VERIFICATION_CHARS = 24000
+REVIEW_VERIFICATION_QUERIES = {
+    'revenue': ('"revenue"', '"revenues"'),
+    'profit': ('"profit before tax"', '"PBT"'),
+    'loan_book': ('"net loan book"',),
+    'long_stop': ('"Long Stop Date"',),
+    'later_date': ('"later date"',),
+}
+REVIEW_VERIFICATION_WEIGHTS = {'revenue': 2, 'profit': 3, 'loan_book': 3, 'long_stop': 1, 'later_date': 3}
 FACT_QUERIES = {
     'parent_name': ('"parent"', '"separation from"'),
     'spinco_name': ('"Spinco"', '"corporation"'),
@@ -116,3 +134,15 @@ FACT_QUERIES = {
                            '"tax opinion" AND "condition" AND "counsel"'),
     'management_equity_awards': ('"vice president" AND "converted"',),
 }
+
+SOURCE_COLLECTION_VERSION = 'official-links-1'
+SOURCE_MAX_REQUESTS = 16
+SOURCE_MAX_DOCUMENTS = 8
+SOURCE_MAX_SECONDS = 90
+SOURCE_TIMEOUT_SECONDS = 10
+SOURCE_MAX_REDIRECTS = 3
+SOURCE_ROBOTS_MAX_BYTES = 256_000
+SOURCE_USER_AGENT = 'InvestResearch/1.0'
+SOURCE_LINK_TERMS = ('scheme', 'offer', 'acquisition', 'merger', 'separation', 'spin-off',
+    'spinoff', 'information statement', 'annual report', 'interim', 'results', 'announcement',
+    'investor', 'financial', 'approval', 'circular', 'prospectus', 'presentation')

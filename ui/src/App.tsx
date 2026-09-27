@@ -6,6 +6,7 @@ import Calculators from './Calculators';
 import SummaryPanel, { SubscriptionSettings } from './Summary';
 import FactsPanel from './Facts';
 import QuestionsPanel from './Questions';
+import ResearchPanel from './Research';
 import './styles.css';
 
 function actionText(result: ActionResult) {
@@ -144,6 +145,8 @@ function CaseScreen({ record, onSaved, onBack }: { record: CaseRecord; onSaved: 
         onSaved(await api.updateCase({ case_id: record.id, title, question, status })); setMessage('Case notes saved.');
       })}>Save case notes</Button>
     </Stack></Paper>
+    <ResearchPanel caseId={record.id} caseUpdatedAt={record.updated_at} documents={detail?.documents}
+      onChanged={refresh} onDocument={(value) => { setDocument(value); setBlockId(null); setQuote(''); }} />
     <SummaryPanel caseId={record.id} caseUpdatedAt={record.updated_at} documents={detail?.documents} onDocument={(value) => {
       setDocument(value); setBlockId(null); setQuote('');
     }} />
