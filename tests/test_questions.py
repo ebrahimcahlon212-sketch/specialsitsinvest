@@ -289,3 +289,26 @@ def test_only_actual_unusable_documents_produce_missing_text_warning(research):
     request, _, _ = cases.prepare_question(research['data'], research['case']['id'], research['document']['id'], QUESTION)
     assert any('1 saved document' in note and 'lack usable text' in note
                for note in json.loads(request['input_text'])['warnings'])
+
+
+@pytest.mark.parametrize('quote,matched', [('Page 1', False),
+    ('Text extraction only; no OCR was performed.', False),
+    ('Time Finance now expects to publish its audited annual results for', True)])
+def test_question_pdf_evidence_excludes_application_markers(tmp_path, quote, matched):
+    db.initialize(tmp_path)
+    case = cases.create_case(tmp_path, 'Saved public PDF with synthetic answer')
+    fixture = Path(__file__).parent / 'fixtures' / 'time_finance_20260902_scheme_publication.pdf'
+    document = documents.import_local(tmp_path, case['id'], fixture)
+    with closing(db.connect(tmp_path)) as connection:
+        source, text = cases._source(connection, case['id'], document['id'])
+    passage = {'id': 1, 'document_id': document['id'], 'start_offset': 0,
+               'end_offset': min(len(text), 4000), 'text': text[:4000]}
+    request = {'model': 'synthetic-no-call', 'prompt_version': prompts.QUESTION_PROMPT_VERSION}
+    raw = json.dumps({'sentences': [{'text': 'Synthetic answer to test citation validation.',
+        'quote': quote, 'status': 'sourced', 'passage_id': 1}], 'limitations': []})
+    result = cases._checked_answer(tmp_path, request, source,
+        {'retrieval': {'source': source, 'passages': [passage]}}, raw)['sentences'][0]
+    assert (result['citation'] is not None) is matched
+    assert result['status'] == ('quote matched' if matched else 'unresolved')
+    if not matched:
+        assert 'not issuer evidence' in result['detail']

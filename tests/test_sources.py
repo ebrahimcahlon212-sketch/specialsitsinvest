@@ -181,3 +181,17 @@ def test_request_limit_stops_before_another_fetch(local_case, monkeypatch):
     result = sources.collect_sources(local_case, 1, root, Event(), lambda value: None)
     assert len(calls) == 2 and len(result['documents']) == 1
     assert any('Request limit' in gap for gap in result['gaps'])
+
+
+@pytest.mark.parametrize('base, expected', [('', 'https://issuer.example/scheme.pdf'),
+    ('/deal/', 'https://issuer.example/deal/scheme.pdf'),
+    ('https://issuer.example/deal/', 'https://issuer.example/deal/scheme.pdf'),
+    ('https://other.example/deal/', None), ('https://[', None), ('/bad\npath/', None)])
+def test_html_base_resolution_preserves_origin_restrictions(base, expected):
+    # Synthetic HTML: a rejected base must not fall back to the wrong document URL.
+    soup = sources.BeautifulSoup(f'<base href="{base}"><a href="scheme.pdf">Scheme document</a>', 'lxml')
+    links, gaps = sources._links(soup, 'https://issuer.example/investors', 'https://issuer.example/')
+    if expected:
+        assert links == [(expected, 'Scheme document')] and not gaps
+    else:
+        assert not links and len(gaps) == 1 and 'base URL was rejected' in gaps[0]

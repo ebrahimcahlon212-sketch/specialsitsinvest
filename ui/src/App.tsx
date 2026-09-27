@@ -110,6 +110,9 @@ function CaseScreen({ record, onSaved, onBack }: { record: CaseRecord; onSaved: 
   const [evidence, setEvidence] = useState<EvidenceInput[]>([]);
   const [template, setTemplate] = useState<ScenarioRecord | null>(null);
   const [calculatorLoad, setCalculatorLoad] = useState(0);
+  const [importing, setImporting] = useState(false);
+  const [importError, setImportError] = useState<string | null>(null);
+  const [importMessage, setImportMessage] = useState('');
   const [error, setError] = useState<string | null>(null);
   const [message, setMessage] = useState('');
   const [busy, setBusy] = useState(false);
@@ -158,9 +161,17 @@ function CaseScreen({ record, onSaved, onBack }: { record: CaseRecord; onSaved: 
     }} />
     <SecImports caseId={record.id} onChanged={refresh} onRead={(id) => openDocument(id)} />
     <Paper withBorder p="lg"><Stack>
-      <Group justify="space-between"><Title order={2}>Documents</Title><Button disabled={busy} onClick={() => run(async () => {
-        const result = await api.importLocal(record.id); await refresh(); setHits(null); setMessage(actionText(result));
+      <Group justify="space-between"><Title order={2}>Documents</Title><Button disabled={busy} loading={importing} onClick={() => run(async () => {
+        setImporting(true); setImportError(null); setImportMessage('Choose a file in the Windows file picker.');
+        try {
+          const result = await api.importLocal(record.id);
+          setImportMessage(actionText(result));
+          await refresh(); setHits(null);
+        } catch (reason) {
+          setImportError(String(reason)); setImportMessage('');
+        } finally { setImporting(false); }
       })}>Import HTML, text or PDF file</Button></Group>
+      <Feedback error={importError} message={importMessage} />
       <Text size="sm">Original files remain saved. Local files do not establish SEC filing metadata or exhibit completeness. The case briefing identifies the exact passages reviewed.</Text>
       {detail?.documents.map((row) => <Paper key={row.id} withBorder p="sm"><Group justify="space-between">
         <Stack gap={3}><Text fw={600}>{row.name ?? 'Unnamed document'}</Text>
@@ -231,12 +242,12 @@ function CaseScreen({ record, onSaved, onBack }: { record: CaseRecord; onSaved: 
         <Text size="sm">Filing date: {document.filing_date ?? 'unknown'} · Form: {document.form_type ?? 'unknown'} · Text version {document.id}</Text>
         <Button variant="default" onClick={() => run(async () => { setMessage(actionText(await api.openOriginal(document.id))); })}>Open original externally</Button>
         <Textarea label="Quote to locate in this document" description={blockId ? 'Matching is restricted to the selected search passage.' : 'A repeated quote needs more context or a selected search passage.'}
-          value={quote} onChange={(e) => setQuote(e.currentTarget.value)} />
+          disabled={busy} value={quote} onChange={(e) => { setQuote(e.currentTarget.value); setDocument({ ...document, citation: null }); }} />
         <Button disabled={busy || !quote.trim()} onClick={() => run(async () => { setDocument(await api.readDocument({ document_id: document.id, block_id: blockId, quote })); })}>Match quote</Button>
         {error && <Alert color="red" role="alert">{error}</Alert>}
         {message && <Text role="status">{message}</Text>}
         {document.citation && <><Badge color="blue">Quote matched</Badge><Text size="sm">This confirms the text occurs, not that its interpretation is correct.</Text>
-          {quote.trim() && <Button onClick={useEvidence}>Attach passage to decision</Button>}</>}
+          {quote.trim() && <Button disabled={busy} onClick={useEvidence}>Attach passage to decision</Button>}</>}
         <Divider />
         <div className="evidence" ref={evidencePane} dangerouslySetInnerHTML={{ __html: document.html }} />
       </Stack>}

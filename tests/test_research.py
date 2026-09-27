@@ -103,6 +103,7 @@ def test_completed_report_exact_evidence_cache_and_owner_history(trial):
     selected = {'case_id': trial['case'], 'document_ids': [trial['doc']]}
     preview = bridge.prepare_research(selected)
     assert preview['error'] is None and preview['plan']['cached_batches'] == state['plan']['batch_count']
+    assert preview['plan']['max_new_requests'] == 0
     saved_state = bridge.research_status({'case_id': trial['case']})
     assert saved_state['state_valid'] and saved_state['report']['id'] == report['id']
     opened = bridge.read_research_evidence({'report_id': report['id'], 'index': 0})
@@ -232,6 +233,76 @@ def test_final_sections_and_nonblank_fields_are_enforced_without_repair(trial):
     assert not any('is not selected' in value for value in plan['warnings'])
 
 
+def test_saved_correction_refreshes_only_report_and_survives_cleared_job_error(trial):
+    first = run(trial)['report']
+    before = research._prepare(trial['data'], trial['case'], [trial['doc']])
+    batch_keys = [research._hash(value) for value in before[1]]
+    citation = first['items'][0]['citation']
+    record = cases.save_decision(trial['data'], trial['case'], 'Synthetic source-review correction',
+        'This synthetic note tests persistence, not a financial assertion.', [trial['doc']], [],
+        [{'document_id': trial['doc'], 'quote': citation['quote']}])
+    research._save(trial['data'], f"research_error_{trial['case']}", None)
+    state = research.status(trial['data'], trial['case'])
+    assert state['report']['stale']
+    assert any('Synthetic source-review correction' in value for value in state['report']['warnings'])
+    after = research._prepare(trial['data'], trial['case'], [trial['doc']])
+    assert [research._hash(value) for value in after[1]] == batch_keys
+    assert after[0]['cached_batches'] == after[0]['batch_count'] and after[0]['max_new_requests'] == 1
+    assert after[0]['plan_key'] != before[0]['plan_key']
+    count = len(trial['calls'])
+    refreshed = run(trial)['report']
+    assert len(trial['calls']) == count + 1 and refreshed['id'] != first['id']
+    assert not refreshed['stale']
+    payload = json.loads(trial['calls'][-1]['input_text'])
+    assert payload['owner_context_not_source_evidence']['saved_decisions'] == [record]
+    check = payload['saved_record_evidence'][0]
+    assert check['decision_id'] == record['id'] and check['passage_ids'] and not check['warnings']
+    assert any(value['id'] in check['passage_ids'] and value['text'] == citation['quote'] for value in payload['original_evidence'])
+    assert research.prepare(trial['data'], trial['case'], [trial['doc']])['max_new_requests'] == 0
+    assert research.read_evidence(trial['data'], first['id'], 0)['citation'] == citation
+    assert cases.list_decisions(trial['data'], trial['case']) == [record]
+
+
+def test_zero_request_preview_rejects_changed_final_input_before_start_or_submission(trial, monkeypatch):
+    run(trial)
+    plan = research.prepare(trial['data'], trial['case'], [trial['doc']])
+    assert plan['max_new_requests'] == 0
+    normal = research._synthesis
+    changed = ['Synthetic changed retrieval context']
+    def altered(*args):
+        request = normal(*args)
+        payload = json.loads(request['input_text'])
+        payload['coverage_warnings'].append(changed[0])
+        return {**request, 'input_text': research._json(payload)}
+    monkeypatch.setattr(research, '_synthesis', altered)
+    calls = len(trial['calls'])
+    with pytest.raises(ValueError, match='Preview'):
+        research.start(trial['data'], trial['case'], [trial['doc']], plan['plan_key'])
+    assert not trial['queue'] and len(trial['calls']) == calls
+    fresh = research.prepare(trial['data'], trial['case'], [trial['doc']])
+    assert fresh['max_new_requests'] == 1
+    research.start(trial['data'], trial['case'], [trial['doc']], fresh['plan_key'])
+    changed[0] = 'Synthetic input changed while queued'
+    function, args = trial['queue'].pop()
+    function(*args)
+    assert len(trial['calls']) == calls
+    assert 'input changed after preview' in research.status(trial['data'], trial['case'])['error']
+
+
+def test_saved_record_evidence_rejects_wrong_hash_and_unselected_version(trial):
+    plan, requests, context, runtime = research._prepare(trial['data'], trial['case'], [trial['doc']])
+    item = research._checked_items(trial['data'], reply(requests[0]), requests[0]['source_snapshot'], 'batch')['items'][0]
+    context['saved_decisions'] = [{'id': 99, 'evidence': [
+        {**item['citation'], 'document_hash': '0' * 64},
+        {**item['citation'], 'document_id': 99999, 'text_version_id': 99999}]}]
+    request = research._synthesis(trial['data'], plan, requests, [], context, runtime)
+    check = request['source_snapshot']['saved_record_evidence'][0]
+    assert not check['passage_ids']
+    assert any('unverified evidence' in warning for warning in check['warnings'])
+    assert any('unselected document 99999' in warning for warning in check['warnings'])
+    assert context['saved_decisions'][0]['evidence'][0]['document_hash'] == '0' * 64
+
+
 def test_populated_migration_preserves_all_parent_and_child_ids_and_recovery(tmp_path):
     db.initialize(tmp_path, 10)
     with closing(db.connect(tmp_path)) as connection, connection:
@@ -307,6 +378,11 @@ def test_synthesis_dedup_retains_all_findings_unmatched_quotes_and_batch_keys(tr
     again = research._prepare(trial['data'], trial['case'], [trial['doc']])
     assert again[0]['plan_key'] == plan['plan_key']
     assert [research._hash(value) for value in again[1]] == batch_keys
+    capped = [{'run_id': 103, 'result': {'items': [copy.deepcopy(matched) for _ in range(constants.REVIEW_MAX_FINDINGS)],
+                                        'warnings': []}}]
+    full = research._synthesis(trial['data'], plan, requests, capped, context, runtime)
+    assert any('1 of 1 batches reached the finding limit' in value for value in full['source_snapshot']['coverage_warnings'])
+    assert len(json.loads(full['input_text'])['batch_findings_not_source_evidence'][0]['items']) == constants.REVIEW_MAX_FINDINGS
 
 
 def test_real_time_verification_includes_target_financials_and_deadline_note(tmp_path):

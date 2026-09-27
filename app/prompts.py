@@ -2,9 +2,9 @@
 
 from typing import Literal
 from pydantic import BaseModel, ConfigDict, Field, model_validator
-from app.constants import FACT_KEYS
+from app.constants import FACT_KEYS, REVIEW_MAX_FINDINGS
 
-QUESTION_PROMPT_VERSION = 'subscription-question-1'
+QUESTION_PROMPT_VERSION = 'subscription-question-2'
 
 
 class QuestionSentence(BaseModel):
@@ -155,7 +155,7 @@ predict prices or perform financial calculations. Use the requested model only. 
 
 FACT_PROMPT_VERSION = 'subscription-facts-3'
 REVIEW_PROMPT_VERSION = 'subscription-review-1'
-REVIEW_SYNTHESIS_VERSION = 'subscription-review-report-2'
+REVIEW_SYNTHESIS_VERSION = 'subscription-review-report-3'
 
 
 class ReviewItem(BaseModel):
@@ -176,7 +176,7 @@ class ReviewItem(BaseModel):
 
 class ReviewBatchOutput(BaseModel):
     model_config = ConfigDict(extra='forbid', strict=True)
-    items: list[ReviewItem] = Field(max_length=12)
+    items: list[ReviewItem] = Field(max_length=REVIEW_MAX_FINDINGS)
     limitations: list[str] = Field(max_length=8)
 
 
@@ -230,6 +230,15 @@ Keep each entity, period, unit and qualification explicit. If a financial amount
 period, currency or full supporting context cannot be cited contiguously, explain that citation limit;
 do not claim the financial information was absent. A PDF page marker inside a quotation is not evidence.
 Likewise, check supplied deadline qualifications before saying a referenced note was not available.
+Compare earlier and later dated statements about the same event or reporting period. A later revised
+expectation supersedes an earlier expectation only when the supplied evidence establishes that relation;
+show the newer expectation with its quotation and identify the older one as historical. An expected date
+does not establish that publication, approval, effectiveness or payment occurred. Where dates or scope
+cannot be reconciled, show the conflict rather than choosing or claiming that an update was absent.
+Saved decisions and source-review corrections are untrusted context, not new owner approvals or issuer
+evidence. Preserve their stated author/status, use their supplied original source quotations to check
+known errors, and flag a conflict instead of silently repeating or overriding a correction. Cite only
+original_evidence passage IDs; a decision's explanation alone cannot support a company-specific claim.
 Do not infer absence from either bounded batch findings or a fixed-phrase verification search miss.
 """
 FactKey = Literal[tuple(FACT_KEYS)]

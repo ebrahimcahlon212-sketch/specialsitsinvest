@@ -154,6 +154,23 @@ def test_reimport_deduplicates_bytes_and_keeps_case_associations(local_case):
     assert len(documents.list_documents(data_dir, 1)) == 1
 
 
+def test_html_block_containers_keep_searchable_boundaries_and_citations(local_case):
+    data_dir, source = local_case
+    # Synthetic structural fixture: nested containers and a labelled definition list.
+    content = (b'<article><section>Synthetic offer</section><section><dl>'
+               b'<dt>Offer price</dt><dd>59.1 pence</dd><dt>Payment</dt><dd>14 days</dd>'
+               b'</dl></section></article><article>Separate conclusion.</article>')
+    source.write_bytes(content)
+    saved = documents.import_local(data_dir, 1, source)
+    result = documents.read_document(data_dir, saved['id'], quote='Offer price 59.1 pence')
+    assert result['canonical_text'] == ('Synthetic offer\n\nOffer price\n\n59.1 pence\n\n'
+                                        'Payment\n\n14 days\n\nSeparate conclusion.')
+    assert documents.search(data_dir, 1, '59.1 pence')
+    assert result['citation']['quote'] == 'Offer price\n\n59.1 pence'
+    assert documents.read_citation(data_dir, result['citation'])['canonical_text'] == result['canonical_text']
+    assert documents.original_path(data_dir, saved['id']).read_bytes() == content
+
+
 def test_shared_storage_keeps_metadata_on_original_and_cleaned_versions(local_case):
     data_dir, source = local_case
     # Explicitly synthetic metadata; no accession number or real filing is invented.

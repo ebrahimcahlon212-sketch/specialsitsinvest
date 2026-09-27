@@ -379,7 +379,6 @@ def prepare_summary(data_dir, case_id, document_id):
 
 
 def _checked_briefing(data_dir, case_id, request, snapshot, raw):
-    import re
     from app import prompts
 
     output = prompts.BriefingOutput.model_validate_json(raw).model_dump()
@@ -406,13 +405,6 @@ def _checked_briefing(data_dir, case_id, request, snapshot, raw):
             bounded = {**sources[passage['document_id']], 'start_offset': passage['start_offset'],
                        'end_offset': passage['end_offset']}
             result = _checked_statement(item, bounded, text)
-            if result['citation']:
-                citation = result['citation']
-                generated = re.finditer(r'(?m)^Page \d+$|\[Extraction notice:[^\]]*\]', text)
-                if bounded['cleaner_version'].startswith('pdf-') and any(
-                        match.start() < citation['end_offset'] and match.end() > citation['start_offset']
-                        for match in generated):
-                    result.update(status='unresolved', citation=None, detail='An extraction notice or page locator is not issuer evidence.')
         if result['citation'] is None:
             # The raw response retains the original comment, but unsupported interpretation
             # must not be promoted alongside a failed factual proposal.
@@ -424,6 +416,7 @@ def _checked_briefing(data_dir, case_id, request, snapshot, raw):
 
 
 def _checked_statement(item, source, text):
+    import re
     from app.documents import match_quote
 
     result = dict(item)
@@ -435,6 +428,10 @@ def _checked_statement(item, source, text):
     else:
         try:
             start, end = match_quote(text, item['quote'], source['start_offset'], source['end_offset'])
+            if source['cleaner_version'].startswith('pdf-') and any(
+                    match.start() < end and match.end() > start
+                    for match in re.finditer(r'(?m)^Page \d+$|\[Extraction notice:[^\]]*\]', text)):
+                raise ValueError('An extraction notice or page locator is not issuer evidence.')
             result['citation'] = {'document_id': source['document_id'], 'document_hash': source['original_sha256'],
                 'text_version_id': source['document_id'], 'start_offset': start, 'end_offset': end,
                 'quote': text[start:end], 'status': 'quote matched'}

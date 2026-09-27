@@ -221,8 +221,9 @@ def clean(content: bytes, media_type: str) -> dict:
             tag.decompose()
         for tag in soup.find_all('br'):
             tag.replace_with(NavigableString('\n'))
-        for tag in soup.find_all('div'):
-            if not tag.find(['p', 'div', 'table', 'ul', 'ol', 'h1', 'h2', 'h3', 'h4', 'h5', 'h6']):
+        for tag in soup.find_all(['div', 'section', 'article', 'dt', 'dd']):
+            if not tag.find(['p', 'div', 'section', 'article', 'dl', 'dt', 'dd',
+                             'table', 'ul', 'ol', 'h1', 'h2', 'h3', 'h4', 'h5', 'h6']):
                 tag.name = 'p'
     cleaned = _safe_html(str(soup))
     # Serialize the parsed sanitized tree, then sanitize once more so the saved

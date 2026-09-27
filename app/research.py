@@ -48,6 +48,7 @@ def _context(data_dir, case_id):
             'SELECT id,name,kind,inputs_json,outputs_json,warning,created_at FROM scenarios WHERE case_id=? ORDER BY id',
             (case_id,))]
         collection = _get(connection, f'research_collection_{case_id}')
+    snapshot['saved_decisions'] = cases.list_decisions(data_dir, case_id)
     snapshot['collection_gaps'] = collection.get('gaps', []) if collection else [
         'No source collection has been recorded. Selected documents alone do not establish a complete or current public record.']
     return snapshot
@@ -98,12 +99,15 @@ def _prepare(data_dir, case_id, document_ids):
     if len(_json(context)) > constants.REVIEW_CONTEXT_CHARS:
         blockers.append(f'Owner notes, facts and saved scenarios exceed the {constants.REVIEW_CONTEXT_CHARS:,}-character context limit. Nothing was truncated.')
     requests = []
+    # Decisions supplement final interpretation. They were not supplied to the
+    # existing document batches, whose complete effective inputs stay unchanged.
+    batch_context = {key: value for key, value in context.items() if key != 'saved_decisions'}
     for batch in batches:
         source = next(value for value in sources if value['document_id'] == batch['document_id'])
         payload = {'source': source, 'passages': batch['passages'], 'warnings': batch['warnings'],
-                   'owner_context_not_source_evidence': context}
+                   'owner_context_not_source_evidence': batch_context}
         snapshot = {'phase': 'batch', 'planner_version': constants.REVIEW_PLANNER_VERSION,
-                    'sources': [source], 'passages': batch['passages'], 'context': context,
+                    'sources': [source], 'passages': batch['passages'], 'context': batch_context,
                     'coverage': {name: batch[name] for name in ('document_id', 'start_offset', 'end_offset')}}
         requests.append(_request('batch', payload, snapshot, runtime))
     plan_key = _hash({'requests': [_hash(value) for value in requests], 'context': context,
@@ -114,10 +118,12 @@ def _prepare(data_dir, case_id, document_ids):
                      'verification_weights': constants.REVIEW_VERIFICATION_WEIGHTS,
                      'verification_characters': constants.REVIEW_VERIFICATION_CHARS,
                      'synthesis_schema': prompts.ReviewReportOutput.model_json_schema()})
-    preview = []
+    preview, completed = [], []
     with closing(db.connect(data_dir)) as connection:
         for batch, request in zip(batches, requests):
             cached = _cached(connection, case_id, _hash(request), 'batch')
+            if cached:
+                completed.append({'run_id': cached['run_id'], 'result': json.loads(cached['result_json'])})
             last = connection.execute('SELECT status FROM model_runs WHERE case_id=? AND request_key=? ORDER BY id DESC LIMIT 1',
                                       (case_id, _hash(request))).fetchone()
             preview.append({name: batch[name] for name in ('index','document_id','start_offset','end_offset')}
@@ -130,6 +136,17 @@ def _prepare(data_dir, case_id, document_ids):
             'allowed': not blockers, 'warnings': list(dict.fromkeys(warnings)), 'blockers': blockers,
             'model': constants.SUMMARY_MODEL_NAME, 'effort': constants.SUMMARY_MODEL_EFFORT,
             'deadline_seconds': constants.SUMMARY_DEADLINE_SECONDS}
+    if cached_count == len(requests) and plan['allowed']:
+        try:
+            final_request = _synthesis(data_dir, plan, requests, completed, context, runtime)
+            plan['_final_request_key'] = _hash(final_request)
+            plan['plan_key'] = _hash({'batch_plan': plan_key, 'final_request': plan['_final_request_key']})
+            with closing(db.connect(data_dir)) as connection:
+                if _cached(connection, case_id, _hash(final_request), 'report'):
+                    plan['max_new_requests'] = 0
+        except ValueError as error:
+            plan['allowed'] = False
+            plan['blockers'].append(str(error))
     return plan, requests, context, runtime
 
 
@@ -257,6 +274,7 @@ def _run_request(data_dir, case_id, plan_key, phase, request, cancel_event, repo
 
 def _synthesis(data_dir, plan, requests, completed, context, runtime):
     findings, evidence, seen = [], [], {}
+    warnings = list(plan['warnings'])
     for outcome in completed:
         items = [dict(item) for item in outcome['result']['items']]
         findings.append({'run_id': outcome['run_id'], 'items': items,
@@ -274,6 +292,31 @@ def _synthesis(data_dir, plan, requests, completed, context, runtime):
             # Original evidence holds the exact quote and its immutable range.
             # Unmatched proposals keep their unverified quotation unchanged.
             del item['quote'], item['citation']
+    capped = sum(len(value['result']['items']) == constants.REVIEW_MAX_FINDINGS for value in completed)
+    if capped:
+        warnings.append(f'{capped} of {len(completed)} batches reached the finding limit. All selected text was supplied, but important findings may have been omitted. Check original passages and saved corrections.')
+    selected = {source['document_id'] for source in plan['sources']}
+    decision_checks = []
+    for record in context.get('saved_decisions', []):
+        check = {'decision_id': record['id'], 'passage_ids': [], 'warnings': []}
+        for citation in record['evidence']:
+            if citation['document_id'] not in selected:
+                check['warnings'].append(f"Saved record {record['id']} cites unselected document {citation['document_id']}; that evidence was not supplied.")
+                continue
+            try:
+                documents.read_citation(data_dir, citation)
+            except (ValueError, OSError) as error:
+                check['warnings'].append(f"Saved record {record['id']} has unverified evidence: {error}")
+                continue
+            identity = citation['document_id'], citation['start_offset'], citation['end_offset']
+            if identity not in seen:
+                seen[identity] = len(evidence) + 1
+                evidence.append({'id': seen[identity], 'document_id': identity[0], 'start_offset': identity[1],
+                    'end_offset': identity[2], 'text': citation['quote'],
+                    'heading': 'Original passage attached to a saved case record', 'partial': False})
+            check['passage_ids'].append(seen[identity])
+        warnings.extend(check['warnings'])
+        decision_checks.append(check)
     verification = []
     for source in plan['sources']:
         checked = documents.retrieve_review_verification(data_dir, source['document_id'],
@@ -289,15 +332,17 @@ def _synthesis(data_dir, plan, requests, completed, context, runtime):
             'searches': checked['searches'],
             'warnings': [f"Additional report source check (document {source['document_id']}): {value}" for value in checked['warnings']],
             'key_passages': {key: [mapping[value] for value in ids] for key, ids in checked['key_passages'].items()}})
+    warnings.extend(warning for check in verification for warning in check['warnings'])
     payload = {'sources': plan['sources'], 'batch_findings_not_source_evidence': findings,
                'original_evidence': evidence, 'owner_context_not_source_evidence': context,
                'direct_source_verification': verification,
-               'coverage_warnings': plan['warnings']}
+               'saved_record_evidence': decision_checks, 'coverage_warnings': warnings}
     if len(_json(payload)) > constants.REVIEW_SYNTHESIS_CHARS:
         raise ValueError(f'All saved findings exceed the {constants.REVIEW_SYNTHESIS_CHARS:,}-character report allowance. Batches remain saved; no findings were silently discarded and no report request was sent.')
     snapshot = {'phase': 'report', 'sources': plan['sources'], 'passages': evidence,
                 'context': context, 'batch_run_ids': [value['run_id'] for value in completed],
-                'direct_source_verification': verification}
+                'direct_source_verification': verification, 'saved_record_evidence': decision_checks,
+                'coverage_warnings': warnings}
     return _request('report', payload, snapshot, runtime)
 
 
@@ -376,13 +421,14 @@ def _review(data_dir, case_id, plan, requests, context, runtime, event):
             _progress(data_dir, case_id, 'Cancelled before the final report. Completed batches remain saved.')
             return
         request = _synthesis(data_dir, plan, requests, completed, context, runtime)
+        if plan.get('_final_request_key') and _hash(request) != plan['_final_request_key']:
+            raise ValueError('The final report input changed after preview. Preview again; no report request was sent.')
         coverage = [{**{key: value[key] for key in ('document_id', 'name', 'total_chars')},
                      'reviewed_chars': value['total_chars'], 'status': 'reviewed'} for value in plan['sources']]
         metadata = {'model': constants.SUMMARY_MODEL_NAME, 'effort': constants.SUMMARY_MODEL_EFFORT,
                     'prompt_version': prompts.REVIEW_SYNTHESIS_VERSION, 'batch_prompt_version': prompts.REVIEW_PROMPT_VERSION,
                     'planner_version': constants.REVIEW_PLANNER_VERSION, 'sources': plan['sources'], 'coverage': coverage,
-                    'coverage_warnings': plan['warnings'] + [warning
-                        for check in request['source_snapshot']['direct_source_verification'] for warning in check['warnings']], 'context': context,
+                    'coverage_warnings': request['source_snapshot']['coverage_warnings'], 'context': context,
                     'batch_run_ids': [value['run_id'] for value in completed], 'plan_key': plan['plan_key']}
         _progress(data_dir, case_id, 'Preparing the final report from saved findings and original quotations.')
         outcome = _run_request(data_dir, case_id, plan['plan_key'], 'report', request, event, metadata)
@@ -451,7 +497,10 @@ def status(data_dir, case_id):
             report = json.loads(row['result_json'])
             reasons = []
             if report['context'] != context:
-                reasons.append('Case documents, notes, human corrections, source checks or scenarios have changed.')
+                reasons.append('Case documents, notes, saved decisions, human corrections, source checks or scenarios have changed.')
+            known_records = {value['id'] for value in report['context'].get('saved_decisions', [])}
+            record_warnings = [f"Saved case record {value['id']} was not supplied to this report: {value['decision']}. {value['reason']} See Decision history for its evidence."
+                               for value in context['saved_decisions'] if value['id'] not in known_records]
             if selected and selected != sorted(value['document_id'] for value in report['sources']):
                 reasons.append('The selected document versions have changed.')
             if (report['prompt_version'] != prompts.REVIEW_SYNTHESIS_VERSION
@@ -467,7 +516,7 @@ def status(data_dir, case_id):
                               'usage_uncertain': bool(value['usage_uncertain'])})
             report.update(id=row['id'], created_at=row['created_at'], run_id=row['run_id'],
                           stale=bool(reasons), stale_reasons=reasons, usage=usage,
-                          warnings=list(dict.fromkeys(report['warnings'] + report['coverage_warnings'])))
+                          warnings=list(dict.fromkeys(report['warnings'] + report['coverage_warnings'] + record_warnings)))
             report.pop('context')
     with _lock:
         job = dict(_jobs.get(_key(data_dir, case_id), {}))

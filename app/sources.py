@@ -160,6 +160,13 @@ def _gate(soup: BeautifulSoup) -> bool:
 
 def _links(soup: BeautifulSoup, url: str, origin: str) -> tuple[list[tuple[str, str]], list[str]]:
     found, excluded, seen = [], [], {url}
+    base = soup.find('base', href=True)
+    try:
+        if base and re.search(r'[\s\\\x00-\x1f\x7f]', base['href']):
+            raise ValueError('Malformed base URL.')
+        base_url = _url(urljoin(url, base['href']), origin) if base else url
+    except ValueError as error:
+        return [], [f'Document links were not fetched because the HTML base URL was rejected: {error}']
     for anchor in soup.find_all('a', href=True):
         if len(found) + len(excluded) >= constants.SOURCE_MAX_REQUESTS:
             excluded.append('Link discovery limit reached; further page links were not inspected.')
@@ -177,7 +184,7 @@ def _links(soup: BeautifulSoup, url: str, origin: str) -> tuple[list[tuple[str, 
             continue
         if re.search(r'privacy|cookie|mailto:|javascript:|terms.of.use', combined):
             continue
-        candidate = urljoin(url, href)
+        candidate = urljoin(base_url, href)
         if candidate in seen:
             continue
         seen.add(candidate)
