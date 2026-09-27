@@ -19,9 +19,9 @@ SEC_TIMEOUT = (10, 30)
 SEC_ATTEMPTS = 3
 SEC_MAX_IMPORT_BYTES = 50 * 1024 * 1024
 SEC_MAX_DOCUMENTS = 100
-CODEX_BINARY = Path.home() / 'AppData/Local/OpenAI/Codex/bin/d375f7df50d3b421/codex.exe'
-CODEX_VERSION = '0.155.0-alpha.16'
-CODEX_SHA256 = '97d4d67419d0ac2f71342f9a5e850f9468aa622618de8ea823223edb9a91926a'
+CODEX_BINARY = Path.home() / 'AppData/Local/OpenAI/Codex/bin/faa963e871dd422c/codex.exe'
+CODEX_VERSION = '0.158.0-alpha.2.1'
+CODEX_SHA256 = '8f0554ede25bbc5450921897c468b2e84635aa513c5017457997af0954581f49'
 MODEL_NAME = 'gpt-5.6-luna'
 MODEL_EFFORT = 'low'
 SUMMARY_MODEL_NAME = 'gpt-6-sol'
@@ -30,13 +30,13 @@ SUMMARY_DEADLINE_SECONDS = 180
 SUMMARY_MAX_DOCUMENTS = 6
 SUMMARY_OPENING_CHARS = 8000
 SUMMARY_DOCUMENT_CHARS = 40000
-SUMMARY_RETRIEVAL_VERSION = 'briefing-fts-1'
+SUMMARY_RETRIEVAL_VERSION = 'briefing-fts-2'
 SUMMARY_QUERIES = {
-    'business': ('"our business"', '"customers"', '"subscription"', '"segments"'),
-    'event': ('"completed"', '"distribution"', '"separation"'),
-    'performance': ('"revenue"', '"operating profit"', '"cash flows"', '"outlook"'),
+    'business': ('"our business"', '"customers"', '"subscription"', '"segments"', '"SME"', '"asset finance"'),
+    'event': ('"completed"', '"distribution"', '"separation"', '"cash acquisition"', '"Offer Price"'),
+    'performance': ('"revenue"', '"operating profit"', '"cash flows"', '"outlook"', '"profit before tax"'),
     'capital': ('"debt"', '"interest expense"', '"dividend"'),
-    'conditions': ('"tax matters"', '"transition services"', '"conditions"'),
+    'conditions': ('"tax matters"', '"transition services"', '"conditions"', '"FCA"', '"Effective Date"'),
     'risks': ('"risk factors"', '"competition"', '"depend"'),
 }
 PDF_MAX_PAGES = 500

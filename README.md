@@ -57,7 +57,7 @@ Under **Ask about a document**, select a saved document version, type a question
 
 ## Optional subscription features
 
-Summaries, deal terms and document answers require an installed Codex client and an existing ChatGPT login. The currently pinned client is `0.155.0-alpha.16`, using `gpt-6-sol` with high reasoning for case briefings and `gpt-5.6-luna` with low reasoning for deal terms and document questions. If Codex replaces this executable during an update, the app stops generation until the replacement is checked. It does not install Codex or fall back to paid API calls.
+Summaries, deal terms and document answers require an installed Codex client and an existing ChatGPT login. The currently pinned client is `0.158.0-alpha.2.1`, using `gpt-6-sol` with high reasoning for case briefings and `gpt-5.6-luna` with low reasoning for deal terms and document questions. If Codex replaces this executable during an update, the app stops generation until the replacement is checked. It does not install Codex or fall back to paid API calls.
 
 Use **Settings > Check connection** before a request. Under **Case briefing**, select up to six documents and click **Generate case briefing** or **Refresh case briefing**. Expand **Supporting quotation** and click **Open quoted passage** to inspect evidence. Generation runs only when requested. The model process has broad read-only filesystem access; it is not isolated to a document folder. Supported optional tools and connectors are disabled, but universal prevention of tool execution has not been established.
 

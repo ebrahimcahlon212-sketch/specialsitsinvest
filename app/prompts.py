@@ -39,7 +39,7 @@ must match. Limitations must describe remaining questions or incomplete coverage
 positive factual claims. Do not recommend an investment or imply the whole filing was reviewed.
 """
 
-SUMMARY_PROMPT_VERSION = "subscription-briefing-4"
+SUMMARY_PROMPT_VERSION = "subscription-briefing-5"
 SUMMARY_SECTIONS = ("company", "event", "what_must_happen", "dates", "unknowns", "risks")
 Section = Literal["company", "event", "what_must_happen", "dates", "unknowns", "risks"]
 
@@ -105,9 +105,11 @@ SUMMARY_PROMPT = """Write a plain-English case briefing for a reader who knows n
 business or event. Use only the supplied public document passages. Aim for 400-600 words excluding
 quotations, with 6-24 short factual items covering all six sections. Explain unfamiliar terms simply.
 company: what the business sells, who pays it, how it earns revenue and its main divisions;
-event: what the separation is and what has actually happened, distinguishing plans from completion;
+event: what the transaction is (such as a separation or cash acquisition) and what has actually happened;
 what_must_happen: remaining conditions or ongoing obligations; do not imply a completed event is pending;
 dates: a short chronology of important events and the dates/periods to which current figures relate;
+For cash acquisitions distinguish proposed payment, conditions, effectiveness and payment timing.
+Keep dividend adjustments and other qualifications attached to the consideration where supplied.
 risks: risks stated in the documents, debt, standalone costs and dependencies;
 unknowns: unanswered questions and limitations of the reviewed passages.
 Return exactly the required JSON. Each factual item and classification explanation contains ONE
