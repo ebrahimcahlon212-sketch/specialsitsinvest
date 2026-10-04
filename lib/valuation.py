@@ -283,6 +283,8 @@ def cmd_extract(deal):
 
 def cmd_compute(deal):
     out = os.path.join(deal, "out")
+    from quality_gate import preflight
+    preflight(out)
     v = json.load(open(os.path.join(out, "valuation.json")))
     info = json.load(open(os.path.join(deal, "deal.json"))) if os.path.exists(os.path.join(deal, "deal.json")) else {}
     tick = (info.get("ticker") or "").upper()

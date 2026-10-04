@@ -20,6 +20,8 @@ import re
 import sys
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+from quality_gate import preflight
+from refclass.quality import whole_holding
 
 TODAY = datetime.date.today()
 
@@ -231,6 +233,14 @@ def compute(t, prices):
                          "odd_lot_return": (tprice / (px * (1 + costs)) - 1) if tender.get("odd_lot_priority") else None,
                          "odd_lot_return_withheld": (tprice * (1 - us_dividend_tax()) / (px * (1 + costs)) - 1)
                          if (tender.get("odd_lot_priority") and withheld_case) else None}
+        entitlement = num(tender.get("expected_entitlement"))
+        if entitlement is None and rows:
+            entitlement = rows[0]["accepted"]
+        if entitlement is not None:
+            residual = num(tender.get("expected_residual_price"))
+            residual = px if residual is None else residual
+            res["tender"].update(expected_entitlement=entitlement, expected_residual_price=residual,
+                                 headline_return=whole_holding(px * (1 + costs), tprice, entitlement, residual))
     # CVRs
     cvr = t.get("cvr") or {}
     if cvr and px:
@@ -290,13 +300,16 @@ def to_markdown(res, warn, t):
     if warn:
         L.append("")
     rows = []
+    tender_headline = (res.get("tender") or {}).get("headline_return")
+    if tender_headline is not None:
+        rows.append(("Whole-holding return at expected entitlement", pct(tender_headline)))
     if res.get("deal_value") is not None:
         rows.append(("Deal value per share" + (" before any CVR" if res.get("cvr") else ""), fmt(res["deal_value"], cur)))
     if res.get("acquirer"):
         rows.append(("%s price used" % res["acquirer"], fmt(res.get("acquirer_price"), cur)))
     if res.get("costs_pct"):
         rows.append(("Buying costs", "%.2f%% of the price" % res["costs_pct"]))
-    if "spread" in res:
+    if "spread" in res and not res.get("tender"):
         rows.append(("Spread, unhedged" + (", before any CVR" if res.get("cvr") else ""),
                      "%s (%s)" % (fmt(res["spread"], cur), pct(res["spread_pct"]))))
     if "hedged_spread" in res:
@@ -409,6 +422,7 @@ def cmd_terms(deal):
 
 def cmd_deal(deal):
     out = os.path.join(deal, "out")
+    preflight(out)
     tpath = os.path.join(out, "terms.json")
     if not os.path.exists(tpath):
         sys.exit("No terms.json yet. Run the terms step first.")
@@ -419,6 +433,8 @@ def cmd_deal(deal):
     with open(os.path.join(out, "calc.md"), "w", encoding="utf-8") as fh:
         fh.write(to_markdown(res, warn, t))
     head = "spread %s" % pct(res.get("spread_pct")) if res.get("spread_pct") is not None else "no spread"
+    if (res.get("tender") or {}).get("headline_return") is not None:
+        head = "whole-holding return %s" % pct(res["tender"]["headline_return"])
     if res.get("scenarios"):
         head += ", %s a year to %s" % (pct(res["scenarios"][0]["per_year"]), res["scenarios"][0]["date"])
     print("  calculator  %s%s" % (head, (" (" + "; ".join(warn) + ")") if warn else ""))

@@ -51,6 +51,11 @@ export US_DIVIDEND_TAX_PCT="${US_DIVIDEND_TAX_PCT:-}"  # US tax withheld from US
 PYTHON="${PYTHON:-python3}"
 ALL_MODELS="claude codex kimi"
 
+# The descriptor stays open through all child steps. Independent runs fail fast.
+if [ "${KIT_RUN_LOCK_PID:-}" != "$$" ]; then
+  exec "$PYTHON" -m refclass.jobs "$KIT/run.sh" "$@"
+fi
+
 say()  { printf '%s\n' "$*"; }
 warn() { printf 'Warning. %s\n' "$*" >&2; }
 die()  { printf 'Stopped. %s\n' "$*" >&2; exit 1; }
@@ -132,6 +137,7 @@ run_step() {
   local model="$1" prompt="$2" label="$3" final="$4" mode="${5:-}"
   local raw="$OUT/raw/$label.$model.txt" log="$OUT/logs/$label.$model.log"
   local start rc
+  "$PYTHON" "$KIT/lib/quality_gate.py" "$OUT" || die "Quality gates stopped $label before the model call."
   start=$(date +%s)
   say "[$label] $model started. Progress log in $(rel "$log")"
   case "$model" in
@@ -1161,6 +1167,10 @@ set_deal() {
 usage() {
   cat <<'EOF'
 Usage
+  ./run.sh refclass build [--input FILE]   import a sourced event-price snapshot
+  ./run.sh refclass update [--input FILE]  merge newly sourced events and prices
+  ./run.sh refclass show NAME             print nested event-price classes and counts
+  ./run.sh refclass gates FILE            check structured quality evidence
   ./run.sh doctor              check that the tools are installed and signed in
   ./run.sh upgrade             install the newest kit zip from your Downloads, keeping your settings and deals
   ./run.sh version             show which version of the kit you have
@@ -1228,6 +1238,7 @@ check_model "$ASK_MODEL"
 case "$WEB_MODEL" in claude|codex) ;; *) die "WEB_MODEL must be claude or codex, since those are the models that can search the web." ;; esac
 
 case "${1:-help}" in
+  refclass) shift; "$PYTHON" -m refclass "$@" || exit $? ;;
   help|-h|--help) usage ;;
   doctor) cmd_doctor ;;
   contact) cmd_contact "${2:-}" ;;

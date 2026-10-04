@@ -12,8 +12,14 @@ journal/
 ledger/
 library/
 knowledge/
+!/knowledge/
+/knowledge/*
+!/knowledge/refclass-rules.md
+!/knowledge/refclass-features.md
 .backups/
 .last_promoted
 __pycache__/
 *.pyc
 *.log
+.locks/
+data/refclass*.sqlite*

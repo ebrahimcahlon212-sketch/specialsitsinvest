@@ -265,6 +265,8 @@ def cmd_batches(out):
 
 
 def cmd_cards(out, paths):
+    from quality_gate import preflight
+    preflight(out)
     data = load_rows(out)
     by_id = dict((r["id"], r) for r in data["rows"])
     n = 0
@@ -290,6 +292,8 @@ def esc(s):
 
 
 def cmd_render(out):
+    from quality_gate import preflight
+    preflight(out)
     data = load_rows(out)
     rows = data["rows"]
     L = ["# Upcoming FDA decisions", "",

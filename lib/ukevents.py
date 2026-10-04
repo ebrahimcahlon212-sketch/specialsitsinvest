@@ -39,6 +39,8 @@ def cmd_window(out):
 
 
 def cmd_ingest(out, path):
+    from quality_gate import preflight
+    preflight(out)
     state = finder.load_json(STATE, {"last_run": None, "seen": {}})
     data = finder.load_json(os.path.join(out, "uk_events.json"), {"new": []})
     have = set(e["id"] for e in data["new"])

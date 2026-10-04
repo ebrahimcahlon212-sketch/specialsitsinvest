@@ -24,6 +24,9 @@ import sys
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import finder  # noqa: E402
+from quality_gate import preflight
+from refclass.math import convert
+from refclass.quality import discount
 
 TODAY = datetime.date.today()
 STATE = os.path.join(finder.FINDER, "catalysts.json")
@@ -138,7 +141,11 @@ def numbers(e):
     except (TypeError, ValueError):
         a = None
     if a and p:
-        out["discount"] = 1 - p / a
+        price_unit = e.get("currency") or ("GBp" if is_london(e) else "USD")
+        anchor_unit = e.get("anchor_currency") or price_unit
+        fx = {(anchor_unit, price_unit): e["fx_rate"]} if e.get("fx_rate") else None
+        out["discount"] = discount(a, anchor_unit, p, price_unit, fx)
+        a = float(convert(a, anchor_unit, price_unit, fx))
         out["upside"] = a / p - 1
         kind = (e.get("anchor_kind") or "").lower()
         if days and days > 14 and any(w in kind for w in PAYOUT_ANCHORS):
@@ -160,6 +167,7 @@ def pct(x):
 
 
 def cmd_render(out):
+    preflight(out)
     state = load_state()
     items = sorted(open_items(state), key=rank)
     unit = lambda e: "p" if is_london(e) else ""

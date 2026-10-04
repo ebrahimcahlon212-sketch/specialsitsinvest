@@ -267,6 +267,8 @@ This is general, not tax advice, so check anything that matters with HMRC's guid
 
 ## Numbers and prices
 
+The phase 1 event-price importer and quality-gate compatibility options are documented in [refclass-phase1.md](refclass-phase1.md). It imports local snapshots, and its offline tests use the Savara comparable prices. Live source collection and mandatory evidence for all legacy outputs remain unfinished.
+
 The models don't do the arithmetic. After the reviews, a terms step pulls the deal's inputs into `out/terms.json`, such as the offer price, the exchange ratio, dates, dividends and probabilities. Python then works out the spread, the return per year for each closing date, the chance of closing the market implies, the probability-weighted result and break-even prices, plus proration scenarios for partial tenders, CVR payoffs and SPAC trust discounts. The final report quotes those figures and includes them in a section called Numbers from the calculator. Cards on the shortlist work the same way.
 
 Prices come from IBKR when a step runs. Before the US market opens at 14:30 UK time that means yesterday's close, because thin pre-market trades are ignored. To refresh later:

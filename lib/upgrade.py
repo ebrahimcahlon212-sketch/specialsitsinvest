@@ -21,7 +21,7 @@ import sys
 import zipfile
 
 PROGRAM = ["run.sh", "AGENTS.md", "CLAUDE.md", "README.md", "VERSION", "LICENSE", ".gitignore", "settings.example.env",
-           "lib/", "prompts/", "templates/", "docs/", "case-studies/"]
+           "lib/", "prompts/", "templates/", "docs/", "case-studies/", "refclass/", "tests/"]
 PATTERNS = ["~/special-sits-kit*.zip", "~/Downloads/special-sits-kit*.zip",
             "/mnt/c/Users/*/Downloads/special-sits-kit*.zip", "/mnt/c/Users/*/Desktop/special-sits-kit*.zip",
             "/mnt/c/Users/*/OneDrive*/Downloads/special-sits-kit*.zip", "/mnt/c/Users/*/OneDrive*/Desktop/special-sits-kit*.zip"]

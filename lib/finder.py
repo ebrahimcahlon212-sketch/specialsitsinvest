@@ -868,6 +868,8 @@ def score_of(card):
 
 
 def cmd_render(out):
+    from quality_gate import preflight
+    preflight(out)
     data = load_json(os.path.join(out, "candidates.json"), {"new": [], "follow": [], "updates": []})
     cards = read_cards(out)
     state = load_json(STATE, {"seen": {}, "seen_cik_type": {}, "cards": {}})

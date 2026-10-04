@@ -1,0 +1,5 @@
+company,ticker,announced_at,pre_date,day1_date,day2_date,pre_close,day1_close,day2_close,day1_percent,day2_percent,source
+Verona,VRNA,2024-06-26,2024-06-26,2024-06-27,2024-06-28,14.69,15.44,14.46,5.11,-1.57,deals/savara/out/biotech.md L.129
+KalVista,KALV,2025-07-07T08:00:00-04:00,2025-07-03,2025-07-07,2025-07-08,11.98,15.06,14.95,25.71,24.79,deals/savara/out/biotech.md L.130
+Crinetics,CRNX,2025-09-25,2025-09-25,2025-09-26,2025-09-29,35.89,45.91,43.51,27.92,21.23,deals/savara/out/biotech.md L.131
+Liquidia,LQDA,2025-05-23T08:00:00-04:00,2025-05-22,2025-05-23,2025-05-27,15.56,15.35,15.60,-1.35,0.26,deals/savara/out/biotech.md L.132

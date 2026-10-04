@@ -11,6 +11,8 @@ kept so nothing is lost, and the exit status is 2 as a warning.
 import json
 import re
 import sys
+from pathlib import Path
+from quality_gate import preflight
 
 BEGIN = re.compile(r"^\s*<<<BEGIN OUTPUT>>>\s*$")
 END = re.compile(r"^\s*<<<END OUTPUT>>>\s*$")
@@ -98,6 +100,10 @@ def between_markers(text):
 def main():
     if len(sys.argv) != 3:
         sys.exit("Usage: extract_output.py RAW_FILE OUT_FILE")
+    try:
+        preflight(Path(sys.argv[2]).parent)
+    except (ValueError, OSError) as exc:
+        sys.exit(f"Stopped. {exc}")
     raw = open(sys.argv[1], encoding="utf-8", errors="replace").read()
     text = to_text(raw)
     result = between_markers(text)
