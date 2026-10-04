@@ -9,8 +9,9 @@ def verify_profile(profile, root):
     when = date.fromisoformat(profile['as_of'])
     text = source_excerpt(profile, deal_root=root)
     absent = bool(re.search(
-        r'\b(?:we have no|has no|no) (?:FDA[- ]approved|approved|commercial) products\b|'
-        r'\bno products (?:have been |are )?approved for commercial sale\b', text, re.I))
+        r'\b(?:we have|the company has) no (?:FDA[- ]approved|approved|commercial) products\b|'
+        r'\b(?:we have|the company has) no products (?:that (?:have been |are ))?approved for commercial sale\b|'
+        r'\b(?:we do not|the company does not) have (?:any )?products (?:that (?:are |have been ))?approved for (?:commercial )?sale\b', text, re.I))
     if profile.get('first_product') is True:
         require(absent, 'Deal profile source does not establish first-product status.')
     elif profile.get('first_product') is False:
@@ -21,7 +22,40 @@ def verify_profile(profile, root):
                 'Deal profile source does not establish an existing US marketed product.')
     else:
         require(profile.get('first_product') is None, 'First-product status must be true, false or null.')
-    if profile.get('market_value') is not None:
+    if profile.get('market_value_inputs') is not None:
+        from .publication import price_evidence
+        from .provenance import shares_verified
+        from .inventory import verify as verify_inventory
+        from .engine import session_dates
+        inputs = profile['market_value_inputs']
+        require(inputs.get('currency') == 'USD', 'Profile market value needs USD.')
+        bar = inputs['price']
+        require(bar['ticker'] == inputs['ticker'] and bar['date'] == profile['as_of'],
+                'Profile price ticker and as-of date must match.')
+        require(price_evidence(bar).get('provider') == 'Massive', 'Profile price needs Massive evidence.')
+        if inputs.get('announced_at'):
+            require(session_dates(inputs['announced_at'], inputs['sessions'])[0] == bar['date'],
+                    'Profile price is not the pre-news session.')
+        # For a prospective deal, value at the supplied as-of close. The next
+        # calendar day is the cutoff for filings available by that close.
+        from datetime import timedelta
+        event = dict(inputs, announced_at=(when + timedelta(days=1)).isoformat())
+        for filing in inputs['share_filings']:
+            source_excerpt(filing, deal_root=root)
+        require(shares_verified(event), 'Profile share evidence failed.')
+        require(date.fromisoformat(inputs['shares_as_of']) <= when,
+                'Profile shares postdate the valuation close.')
+        verify_inventory(event)
+        from .math import positive
+        positive(bar['close'])
+        positive(inputs['shares'])
+        value = Decimal(str(bar['close'])) * Decimal(str(inputs['shares']))
+        require(value.is_finite() and value > 0, 'Profile market value must be positive.')
+        if profile.get('market_value') is not None:
+            require(Decimal(str(profile['market_value'])) == value, 'Profile market value calculation mismatch.')
+        profile['market_value'] = str(value)
+        profile['market_value_calculation'] = f"{bar['close']} * {inputs['shares']} = {value} USD"
+    elif profile.get('market_value') is not None:
         ev = profile['market_value_evidence']
         text = source_excerpt(ev, deal_root=root)
         require(ev.get('currency') == 'USD' and ev.get('as_of') == profile['as_of'],

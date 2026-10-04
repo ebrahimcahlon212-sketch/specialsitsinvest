@@ -215,22 +215,55 @@ def register_review(prepared, output):
         path.write_text(json.dumps(active, indent=2) + '\n')
 
 
+def assertion_differences(a, b, prefix=''):
+    """Only differing fields, with tags indexed by feature for readable output."""
+    if isinstance(a, dict) and isinstance(b, dict):
+        for key in sorted(a.keys() | b.keys()):
+            yield from assertion_differences(a.get(key), b.get(key), prefix + '.' + key if prefix else key)
+    elif a != b:
+        yield prefix + ' ' + json.dumps(a, sort_keys=True) + ' -> ' + json.dumps(b, sort_keys=True)
+
+
+def review_assertions(row):
+    event = substantive(review_event(row, tolerate=True))
+    if isinstance(event.get('tags'), list):
+        event['tags'] = {t['feature']: t.get('value') for t in event['tags']}
+    return dict(decision=row.get('decision'), assertions=event)
+
+
 def pending_reviews(root):
-    path = Path(root) / 'active-reviews.json'
+    root = Path(root)
+    path = root / 'active-reviews.json'
     active = json.loads(path.read_text()) if path.exists() else {}
-    for folder in sorted(set(active.values())):
+    # Unregistered pre-registry output remains visible. Registry entries take
+    # precedence per candidate, including a newer resolution with no dispute.
+    folders = set(active.values()) | {str(p.parent.resolve()) for p in root.rglob('disagreements.csv')}
+    for folder in sorted(folders):
         path = Path(folder) / 'disagreements.csv'
         if not path.exists():
             yield 'Current review output is missing. ' + str(path)
             continue
         with path.open(newline='') as f:
             for row in csv.DictReader(f):
-                if active.get(row['candidate_id']) != folder:
+                if row['candidate_id'] in active and active[row['candidate_id']] != folder:
                     continue
-                details = []
-                for name in ('review_one', 'review_two'):
-                    review = json.loads(row[name])
-                    event = review_event(review, tolerate=True)
-                    details.append(name + ' ' + json.dumps(dict(decision=review.get('decision'),
-                        reason=review.get('reason'), assertions=substantive(event)), sort_keys=True))
-                yield row['candidate_id'] + ' | ' + ' | '.join(details) + ' | ' + row.get('reason', '') + ' [' + str(path) + ']'
+                a, b = (json.loads(row[name]) for name in ('review_one', 'review_two'))
+                details = list(assertion_differences(review_assertions(a), review_assertions(b)))
+                if not details:
+                    details = ['No differing assertions; unresolved or invalid evidence']
+                reasons = ' | '.join(filter(None, (a.get('reason'), b.get('reason'), row.get('reason'))))
+                yield row['candidate_id'] + ' | ' + ' | '.join(details) + ' | ' + reasons + ' [' + str(path) + ']'
+
+
+def price_reviews(db, knowledge):
+    """Read the current database, so updates cannot leave a stale price queue."""
+    if not Path(db).exists():
+        return
+    from .engine import report
+    result = report(db, 'all', knowledge)
+    for row in result.get('ibkr_comparisons', []):
+        if row['status'] == 'review':
+            yield 'Price difference requires review. ' + json.dumps(row, sort_keys=True)
+    missing = sum(r['status'] == 'missing' for r in result.get('ibkr_comparisons', []))
+    if missing:
+        yield f'IBKR independent check missing for {missing} event/ticker/session observations.'

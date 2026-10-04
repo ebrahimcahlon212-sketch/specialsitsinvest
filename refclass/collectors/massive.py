@@ -3,7 +3,7 @@
 Only the standard library is used. Authorization is a header, never a URL.
 Offline replay needs no key. All live requests share a persisted rate limiter.
 """
-from datetime import date, datetime, timezone
+from datetime import date, datetime, timezone, timedelta
 import hashlib
 import json
 from pathlib import Path
@@ -45,7 +45,11 @@ class NoRedirect(urllib.request.HTTPRedirectHandler):
 
 class Client:
     def __init__(self, cache, *, settings=None, offline=False, opener=None,
-                 sleep=time.sleep, clock=time.time, rate_path=None):
+                 sleep=time.sleep, clock=time.time, rate_path=None, calls_per_minute=5, refresh=False):
+        if not 0 < calls_per_minute <= 10000:
+            raise ValueError('Calls per minute must be positive and at most 10000.')
+        self.interval = 60 / calls_per_minute + 0.1
+        self.refresh = refresh
         self.cache = Path(cache)
         self.offline = offline
         self.key = None if offline else api_key(settings or ROOT / 'settings.env')
@@ -57,7 +61,7 @@ class Client:
         self.rate_path.parent.mkdir(parents=True, exist_ok=True)
         with job_lock(str(self.rate_path) + '.lock'):
             last = json.loads(self.rate_path.read_text()) if self.rate_path.exists() else 0
-            delay = max(0, last + 12.1 - self.clock())
+            delay = max(0, last + self.interval - self.clock())
             self.sleep(delay)
             self.rate_path.write_text(json.dumps(self.clock()))
 
@@ -67,7 +71,35 @@ class Client:
         manifest = self.cache / 'manifest.json'
         records = json.loads(manifest.read_text()) if manifest.exists() else []
         record = next((r for r in reversed(records) if r['url'] == url), None)
-        if self.offline:
+        cached = None
+        if not self.offline and not self.refresh:
+            # Reuse successful exact requests across download dates. Failed or
+            # incomplete responses remain retryable after an entitlement upgrade.
+            manifests = [manifest]
+            if self.cache.parent.name == 'massive':
+                manifests += sorted(self.cache.parent.glob('*/manifest.json'), reverse=True)
+            for candidate in dict.fromkeys(manifests):
+                entries = json.loads(candidate.read_text()) if candidate.exists() else []
+                for saved in reversed(entries):
+                    if saved['url'] != url or saved['status'] != 200:
+                        continue
+                    path = (candidate.parent / saved['file']).resolve()
+                    if not path.is_relative_to(candidate.parent.resolve()):
+                        raise CollectionError('Massive cache path escapes its directory.')
+                    raw = path.read_bytes()
+                    if hashlib.sha256(raw).hexdigest() != saved['sha256']:
+                        raise CollectionError('Massive cached response checksum mismatch.')
+                    try:
+                        unpack(json.loads(raw), ticker, adjusted, since, until)
+                    except (ValueError, KeyError, TypeError):
+                        continue
+                    cached = (saved, candidate, path, raw)
+                    break
+                if cached:
+                    break
+        if cached:
+            record, manifest, path, raw = cached
+        elif self.offline:
             if record is None:
                 raise CollectionError('Massive response missing from offline cache.')
             path = (self.cache / record['file']).resolve()
@@ -81,7 +113,7 @@ class Client:
             req = urllib.request.Request(url, headers={'Authorization': 'Bearer ' + self.key})
             try:
                 with self.opener(req, timeout=30) as response:
-                    raw, status = response.read(2_000_001), response.status
+                    raw, status = response.read(20_000_001), response.status
             except urllib.error.HTTPError as exc:
                 status = exc.code
                 # Error bodies may echo credentials. Save only status and the keyless request.
@@ -89,7 +121,7 @@ class Client:
                 raw = json.dumps({'status': 'HTTP_ERROR', 'http_status': status}).encode()
             except (urllib.error.URLError, OSError):
                 raise CollectionError('Massive request failed; credentials and transport details withheld.') from None
-            if len(raw) > 2_000_000:
+            if len(raw) > 20_000_000:
                 raise CollectionError('Massive response exceeds the saved sample size limit.')
             if self.key.encode() in raw:
                 raise CollectionError('Massive response echoed credentials; response was not saved.')
@@ -146,7 +178,7 @@ def collect(client, *, tickers, since, until, history_years=2, today=None):
         cursor = date.fromisoformat(start)
         while cursor.isoformat() <= stop:
             # Bound each response below the daily-aggregate limit, including a full census after upgrade.
-            end = min(date(cursor.year, 12, 31).isoformat(), stop)
+            end = min((cursor + timedelta(days=49_999)).isoformat(), stop)
             try:
                 pair = [client.get(ticker, cursor.isoformat(), end, adjusted) for adjusted in (False, True)]
                 maps = [unpack(data, ticker, flag, cursor.isoformat(), end)
@@ -171,7 +203,7 @@ def collect(client, *, tickers, since, until, history_years=2, today=None):
                     adjusted_close=b['adjusted_close'], source=f'{output.resolve()}#L{n}') for n, b in enumerate(bars, 1))
             except (ValueError, KeyError, TypeError, OSError) as exc:
                 result['gaps'].append(f'{ticker} {cursor} through {end}. {exc}')
-            cursor = date(cursor.year + 1, 1, 1)
+            cursor = date.fromisoformat(end) + timedelta(days=1)
     result.update(complete=not result['gaps'], gap_count=len(result['gaps']),
                   coverage_gaps=['Daily bars do not establish complete exchange sessions; event windows check missing bars.'])
     return result

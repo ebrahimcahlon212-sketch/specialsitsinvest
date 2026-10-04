@@ -27,7 +27,7 @@ def conventions(knowledge):
     for name in ("rules", "features"):
         content = (Path(knowledge) / f"refclass-{name}.md").read_bytes()
         first = content.decode().splitlines()[0]
-        version = 3 if name == "rules" else 1
+        version = 4 if name == "rules" else 1
         if not first.endswith(f"version {version}"):
             raise ValueError(f"Unsupported {name} version. Update the engine and its tests first.")
         result[f"{name}_version"] = version
@@ -217,7 +217,11 @@ def build(db, snapshot, knowledge, update=False):
             snapshot["coverage"] = coverage
             old_checks = json.loads(previous.get('ibkr_checks', '[]'))
             checks = {(r['ticker'], r['date']): r for r in old_checks}
-            checks.update({(r['ticker'], r['date']): r for r in snapshot.get('ibkr_checks', [])})
+            for row in snapshot.get('ibkr_checks', []):
+                key = (row['ticker'], row['date'])
+                if key in checks and checks[key]['close'] != row['close']:
+                    raise ValueError('Conflicting ibkr_checks for ' + str(key))
+                checks[key] = row
             snapshot['ibkr_checks'] = list(checks.values())
             snapshot["gaps"] = sorted(set(json.loads(previous.get("gaps", "[]")) + snapshot.get("gaps", [])))
         as_of = snapshot["as_of"]
@@ -393,6 +397,13 @@ def render(result):
         profile = result["deal_profile"]
         lines.append(f'Deal matches class {result["selected_class"]} as of {profile["as_of"]}. '
                      f'[{profile["source"]}, {profile["locator"]}]')
+        if profile.get('market_value_inputs'):
+            inputs = profile['market_value_inputs']
+            filing = next(f for f in inputs['share_filings'] if f['source'] == inputs['shares_source']
+                          and f['as_of'] == inputs['shares_as_of'])
+            lines.append('Profile market value. ' + profile['market_value_calculation'] +
+                         f" [close {inputs['price']['source']}; common shares {filing['source']}"
+                         f" L.{filing['line_start']}-{filing['line_end']}]")
     if result["fixture"]:
         lines.append("SYNTHETIC fixture metadata and XBI. This is not a historical census or a live-use result.")
     lines.append(f"Collected candidates {result.get('candidate_count', 0)}. Pending candidate reviews {len(result.get('pending_candidates', []))}.")
@@ -402,8 +413,10 @@ def render(result):
               f'Unknown first-product status {result["unknown_first_product"]}. Source gaps {len(result["gaps"])}.']
     lines.extend("Source gap. " + gap for gap in result["gaps"])
     lines.extend(f'Excluded {row["event_id"]}. {row["reason"]}' for row in result.get("exclusions", []))
-    for comparison in result.get('ibkr_comparisons', []):
-        lines.append('IBKR independent check. ' + json.dumps(comparison, sort_keys=True))
+    comparisons = result.get('ibkr_comparisons', [])
+    lines.append('IBKR independent checks. ' + ', '.join(
+        f'{status} {sum(r["status"] == status for r in comparisons)}'
+        for status in ('matched', 'review', 'missing')) + '. Run refclass review for differences.')
     lines.extend(f"Source coverage. {key}. {value}" for key, value in result["coverage"].items())
     lines.append("No approval probabilities or likelihood ratios in phase 1. Live use requires the phase 2 backtest.")
     def fmt(summary):

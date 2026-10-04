@@ -4,9 +4,9 @@ Read [the amendments](spec-amendments.md) with [the system specification](system
 
 FDA approval and CRL collectors use openFDA. EDGAR collection saves submissions inventories, 8-Ks and bounded exhibits. Real saved response fixtures test these collectors. No full historical census is supplied. Missing CBER and unpublished-CRL coverage remain explicit gaps.
 
-Massive daily aggregates supply paired as-traded and split-adjusted closes, with genuine small saved responses for offline tests. Free-tier history is limited to two years by default. Earlier requested windows remain counted gaps. Ebrahim can run the full census after upgrading, using `collect massive --history-years 20`. Historical symbols are requested directly without filtering against a current-listed ticker universe.
+Massive daily aggregates supply paired as-traded and split-adjusted closes, with genuine small saved responses for offline tests. Free-tier history is limited to two years by default. Earlier requested windows remain counted gaps. Ebrahim can run the full census after upgrading, using `collect massive --history-years 20`, with an explicit `--calls-per-minute` matching the purchased plan. Exact successful requests resume across saved download dates; `--refresh` bypasses reuse. Historical symbols are requested directly without filtering against a current-listed ticker universe.
 
-IBKR `fetch-bars` saves original transcripts and retains plain OHLCV for independent comparison only. Events in the last five years report stock and XBI differences above one cent and missing comparisons. The production census requires Massive bars; broker observations cannot replace them. No live broker data was fetched during this build.
+IBKR `fetch-bars` saves original transcripts and retains plain OHLCV for independent comparison only. Events in the last five years compare broker closes against both Massive conventions. Differences above one cent from both appear in `refclass review`; missing comparisons remain counted. JSON keeps each difference and the matching convention. The production census requires Massive bars; broker observations cannot replace them. No live broker data was fetched during this build.
 
 ```sh
 python3 -m unittest discover -v

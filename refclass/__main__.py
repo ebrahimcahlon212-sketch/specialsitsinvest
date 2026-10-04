@@ -45,6 +45,9 @@ def main(argv=None):
     collect.add_argument("--max-filings", type=int, default=1)
     collect.add_argument("--max-history", type=int, default=1)
     collect.add_argument("--history-years", type=int, default=2, help="Massive plan history, default free-tier two years")
+    collect.add_argument("--calls-per-minute", type=float, default=5,
+                         help="Massive plan limit, default 5; set only to your paid plan allowance")
+    collect.add_argument("--refresh", action="store_true", help="Refetch Massive requests instead of resuming saved successes")
     collect.add_argument("--max-exhibits", type=int, default=2)
     profile = sub.add_parser('profile', help='Validate and save a deal profile from primary deal documents')
     profile.add_argument('name')
@@ -56,6 +59,7 @@ def main(argv=None):
     prepare.add_argument('--collection', type=Path, action='append', required=True)
     prepare.add_argument('--output', type=Path, required=True)
     review = sub.add_parser('review', help='Reconcile two saved independent model CSV reviews')
+    review.add_argument('--db', type=Path, default=Path(os.environ.get('REFCLASS_DB', root / 'data/refclass.sqlite')))
     review.add_argument('--prepared', type=Path)
     review.add_argument('--reviews', type=Path, nargs=2)
     review.add_argument('--output', type=Path)
@@ -86,6 +90,8 @@ def main(argv=None):
             if not any((args.prepared, args.reviews, args.output, args.resolve)):
                 from .review import pending_reviews
                 rows = list(pending_reviews(root / 'data/refclass'))
+                from .review import price_reviews
+                rows.extend(price_reviews(args.db, root / 'knowledge'))
                 print('\n'.join(rows) if rows else 'No current saved disagreements under data/refclass.')
                 return 0
             if not all((args.prepared, args.reviews, args.output)):
@@ -107,7 +113,8 @@ def main(argv=None):
                     from .collectors import massive
                     if not args.tickers:
                         raise ValueError('Massive collection needs --tickers, including historical delisted symbols.')
-                    client = massive.Client(args.cache, settings=args.settings, offline=args.offline)
+                    client = massive.Client(args.cache, settings=args.settings, offline=args.offline,
+                                            calls_per_minute=args.calls_per_minute, refresh=args.refresh)
                     result = massive.collect(client, tickers=args.tickers, since=args.since, until=args.until,
                                              history_years=args.history_years)
                 elif args.source == "ibkr":

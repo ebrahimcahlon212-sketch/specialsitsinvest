@@ -1,6 +1,8 @@
-# Reference class rules, version 3
+# Reference class rules, version 4
 
 Fixed on 4 October 2026, before any results were seen. Any subsequent rule change increments the version, and every output records the version it used.
+
+Version 4 clarifies the dual-convention broker comparison under amendment 15 and review 7. Rebuild existing databases before reporting with these conventions.
 
 ## Events
 An event is an FDA approval, complete response letter, refusal to file, review extension or accepted resubmission for an NDA or original BLA. Supplements and abbreviated applications, such as generics and biosimilars, are excluded. The window runs from 1 January 2015 to the build date. The sponsor, or a partner with disclosed US economics, must be listed on a US exchange at the event date.
@@ -19,7 +21,7 @@ Approvals and rejections are always reported separately, with the count at every
 - The pre-news close is the last regular-session close before the announcement.
 - A pre-market announcement makes that day's session day one. An announcement during market hours or after the close makes the next session day one. Day two is the session after day one.
 - Census prices use Massive daily aggregates, requested with adjusted=false for as-traded closes and adjusted=true for split-adjusted closes. Delisted symbols remain eligible. Free-tier history gaps remain explicit until the full run after upgrade.
-- IBKR closes independently check the event windows within the last five years. Differences above $0.01 require review; missing broker bars remain explicit.
+- IBKR closes independently check the event windows within the last five years. Compare against both as-traded and split-adjusted Massive closes, recording both differences and the matching convention. Differences above $0.01 from both require review; missing broker bars remain explicit. This comparison does not establish the live broker adjustment convention.
 - Returns use split-adjusted closes, and the abnormal return is the stock's return from the pre-news close minus XBI's return over the same window.
 - Market value is the pre-news close multiplied by common shares outstanding from the latest filing before the event.
 

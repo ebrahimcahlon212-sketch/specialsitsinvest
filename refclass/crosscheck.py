@@ -49,9 +49,15 @@ def compare_bars(events, prices, sessions, checks, as_of):
                 if a is None or b is None:
                     record.update(status='missing', reason='Massive or IBKR close unavailable')
                 else:
-                    difference = abs(Decimal(str(a['close'])) - Decimal(str(b['close'])))
+                    raw_difference = abs(Decimal(str(a['close'])) - Decimal(str(b['close'])))
+                    adjusted_difference = abs(Decimal(str(a['adjusted_close'])) - Decimal(str(b['close'])))
+                    difference = min(raw_difference, adjusted_difference)
                     record.update(status='review' if difference > Decimal('.01') else 'matched',
-                        difference=str(difference), massive_close=a['close'], ibkr_close=b['close'],
+                        difference=str(difference), as_traded_difference=str(raw_difference),
+                        adjusted_difference=str(adjusted_difference), massive_adjusted_close=a['adjusted_close'],
+                        matched_convention=('both' if raw_difference <= Decimal('.01') and adjusted_difference <= Decimal('.01')
+                            else 'as_traded' if raw_difference <= Decimal('.01') else 'split_adjusted'
+                            if adjusted_difference <= Decimal('.01') else None), massive_close=a['close'], ibkr_close=b['close'],
                         massive_source=a['source'], ibkr_source=b['source'])
                 results.append(record)
     return results
