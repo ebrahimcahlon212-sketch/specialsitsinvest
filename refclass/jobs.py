@@ -1,18 +1,30 @@
 """Hold a kernel lock across a run.sh job, including its child steps."""
 import fcntl
+import hashlib
 import os
 from pathlib import Path
 import sys
 
 
+def job_key(args):
+    """Lock a job identity, not the entire kit or read-only commands."""
+    if not args or args[0] in {"help", "--help", "-h", "version", "doctor", "knowledge"}:
+        return None
+    if args[0] == "refclass":
+        return None  # Database writes have their own lock.
+    if len(args) > 1 and args[1] in {"ask", "view", "ledger"}:
+        return None
+    identity = args[:2] if len(args) > 1 else [args[0], "run"]
+    return hashlib.sha256("\0".join(identity).encode()).hexdigest()[:24]
+
+
 def main():
     script, *args = sys.argv[1:]
     root = Path(script).resolve().parent
-    readonly = not args or args[0] in ("help", "--help", "-h", "version", "doctor")
-    readonly = readonly or (args[:2] in (["refclass", "show"], ["refclass", "gates"]))
+    key = job_key(args)
     env = os.environ.copy()
-    if not readonly:
-        path = root / ".locks" / "run.lock"
+    if key:
+        path = root / ".locks" / (key + ".lock")
         path.parent.mkdir(exist_ok=True)
         inherited = False
         try:
@@ -25,7 +37,7 @@ def main():
         try:
             fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
         except BlockingIOError:
-            print("Stopped. Run lock failed. A kit job is already running.", file=sys.stderr)
+            print("Stopped. Run lock failed. This job is already running.", file=sys.stderr)
             return 1
         os.set_inheritable(fd, True)
         env["KIT_RUN_LOCK_FD"] = str(fd)

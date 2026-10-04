@@ -14,6 +14,7 @@ from statistics import median
 from zoneinfo import ZoneInfo
 
 from .locking import job_lock
+from .provenance import eligibility_gap, shares_verified
 from .math import abnormal_return, positive, raw_return
 
 EASTERN = ZoneInfo("America/New_York")
@@ -205,6 +206,10 @@ def build(db, snapshot, knowledge, update=False):
         as_of = snapshot["as_of"]
         date.fromisoformat(as_of)
         events, prices, sessions = (snapshot.get(key, []) for key in ("events", "prices", "sessions"))
+        if not snapshot.get("fixture"):
+            if any("synthetic" in str(p.get("source", "")).lower() or "fixture" in str(p.get("source", "")).lower()
+                   for p in prices):
+                raise ValueError("Synthetic price sources require fixture=true; they cannot be production inputs.")
         seen = set()
         prepared = []
         for event in events:
@@ -217,7 +222,12 @@ def build(db, snapshot, knowledge, update=False):
                 raise ValueError("Duplicate event_id in snapshot")
             seen.add(event["event_id"])
             excluded = exclusion(event, as_of)
-            prepared.append((event, excluded, market_value(event, prices, sessions),
+            cap = market_value(event, prices, sessions)
+            if not snapshot.get("fixture"):
+                excluded = excluded or eligibility_gap(event)
+                if not shares_verified(event):
+                    cap = None
+            prepared.append((event, excluded, cap,
                              reaction(event, prices, sessions) if not excluded else {"status": "excluded", "reason": excluded}))
         # Validate provenance and dates before replacing any data.
         for row in prices:
@@ -297,11 +307,30 @@ def report(db, name, knowledge):
                            ("C. First product under $3 billion", core)):
         classes.append(dict(label=label, count=len(subset), thin=len(subset) < 10, **summarize(subset),
                             without_same_day_news=summarize([r for r in subset if r[0].get("same_day_news") is False])))
-    return dict(metadata, deal=name, found=len(stored), eligible=len(rows), excluded=len(stored) - len(rows),
+    profile = None
+    selected = None
+    profile_gap = None
+    if name != "all":
+        profile_path = Path(knowledge).parent / "deals" / name / "refclass.json"
+        if profile_path.exists():
+            profile = json.loads(profile_path.read_text())
+            if not profile.get("source") or not profile.get("locator") or not profile.get("as_of"):
+                raise ValueError("Deal reference-class profile needs source, locator and as_of")
+            date.fromisoformat(profile["as_of"])
+            selected = "A"
+            if profile.get("first_product") is True:
+                selected = "B"
+                if profile.get("market_value") is not None and positive(profile["market_value"]) < 3_000_000_000:
+                    selected = "C"
+        else:
+            profile_gap = f"No sourced deal profile at {profile_path}. Classes below are global context only."
+    return dict(metadata, deal=name, deal_profile=profile, selected_class=selected, profile_gap=profile_gap, found=len(stored), eligible=len(rows), excluded=len(stored) - len(rows),
                 unpriced=sum(r["status"] == "unpriced" for _, r, _ in rows),
                 unknown_time=sum(r.get("unknown_time", False) for _, r, _ in rows),
                 unknown_market_value=sum(cap is None for _, _, cap in rows), classes=classes,
                 unknown_first_product=sum(e.get("first_product") is None for e, _, _ in rows),
+                exclusions=[dict(event_id=json.loads(e)["event_id"], reason=excluded)
+                            for e, r, cap, excluded in stored if excluded],
                 events=[dict(event=e, reaction=r, market_value=cap) for e, r, cap in rows])
 
 
@@ -311,6 +340,12 @@ def render(result):
              f'Features version {result["features_version"]}, SHA-256 {result["features_sha256"]}',
              f'As of {result["as_of"]}. {result["summary_convention"]}.',
              'Returns = adjusted post close / adjusted pre close - 1; abnormal = stock return - XBI return.']
+    if result.get("profile_gap"):
+        lines.append(result["profile_gap"])
+    if result.get("selected_class"):
+        profile = result["deal_profile"]
+        lines.append(f'Deal matches class {result["selected_class"]} as of {profile["as_of"]}. '
+                     f'[{profile["source"]}, {profile["locator"]}]')
     if result["fixture"]:
         lines.append("SYNTHETIC fixture metadata and XBI. This is not a historical census or a live-use result.")
     lines += [f'Found {result["found"]}. Eligible {result["eligible"]}. Excluded {result["excluded"]}. '
@@ -318,6 +353,7 @@ def render(result):
               f'Unknown market value {result["unknown_market_value"]}. '
               f'Unknown first-product status {result["unknown_first_product"]}. Source gaps {len(result["gaps"])}.']
     lines.extend("Source gap. " + gap for gap in result["gaps"])
+    lines.extend(f'Excluded {row["event_id"]}. {row["reason"]}' for row in result.get("exclusions", []))
     lines.extend(f"Source coverage. {key}. {value}" for key, value in result["coverage"].items())
     lines.append("No approval probabilities or likelihood ratios in phase 1. Live use requires the phase 2 backtest.")
     def fmt(summary):

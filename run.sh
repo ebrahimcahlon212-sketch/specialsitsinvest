@@ -137,7 +137,17 @@ run_step() {
   local model="$1" prompt="$2" label="$3" final="$4" mode="${5:-}"
   local raw="$OUT/raw/$label.$model.txt" log="$OUT/logs/$label.$model.log"
   local start rc
-  "$PYTHON" "$KIT/lib/quality_gate.py" "$OUT" || die "Quality gates stopped $label before the model call."
+  cat >> "$prompt" <<'QUALITY_INSTRUCTIONS'
+
+For a published report, return a JSON evidence object between standalone
+<<<BEGIN QUALITY>>> and <<<END QUALITY>>> lines, outside the OUTPUT block.
+Use lib/quality_gate.py and refclass/quality.py for the schema. Include units,
+staleness, listing, attribution, date_type, arithmetic and partial_tender.
+Use {"not_applicable": "specific reason"} only for inapplicable checks.
+Arithmetic must include each reported computation with its inputs and result.
+Date evidence requires a saved source path and line_start/line_end; code rereads it.
+Missing or failed evidence blocks publication. Do not invent passing evidence.
+QUALITY_INSTRUCTIONS
   start=$(date +%s)
   say "[$label] $model started. Progress log in $(rel "$log")"
   case "$model" in
@@ -169,7 +179,11 @@ run_step() {
   if [ "$rc" -ne 0 ]; then
     warn "[$label] $model exited with code $rc. Its reply was kept, but check $(rel "$log")"
   fi
-  "$PYTHON" "$KIT/lib/extract_output.py" "$raw" "$final"
+  local extraction_mode="publication"
+  case "$label" in
+    draft|review*|map|terms|quotes|ukquotes|remember|feedback|*triage*|bio-cards-*|catalysts|uk-events) extraction_mode="research" ;;
+  esac
+  "$PYTHON" "$KIT/lib/extract_output.py" "$raw" "$final" "$extraction_mode"
   case $? in
     0) ;;
     2) warn "[$label] $model did not mark its output, so its whole reply was saved." ;;
@@ -1167,7 +1181,7 @@ set_deal() {
 usage() {
   cat <<'EOF'
 Usage
-  ./run.sh refclass build [--input FILE]   import a sourced event-price snapshot
+  ./run.sh refclass build [--input FILE]   import a sourced snapshot in a logged background job
   ./run.sh refclass update [--input FILE]  merge newly sourced events and prices
   ./run.sh refclass show NAME             print nested event-price classes and counts
   ./run.sh refclass gates FILE            check structured quality evidence
@@ -1238,7 +1252,18 @@ check_model "$ASK_MODEL"
 case "$WEB_MODEL" in claude|codex) ;; *) die "WEB_MODEL must be claude or codex, since those are the models that can search the web." ;; esac
 
 case "${1:-help}" in
-  refclass) shift; "$PYTHON" -m refclass "$@" || exit $? ;;
+  refclass)
+    shift
+    if [ "${1:-}" = build ] || [ "${1:-}" = update ]; then
+      if [ "${2:-}" = --foreground ]; then
+        command="$1"; shift 2
+        "$PYTHON" -m refclass "$command" "$@" || exit $?
+      else
+        "$PYTHON" -m refclass.background "$@" || exit $?
+      fi
+    else
+      "$PYTHON" -m refclass "$@" || exit $?
+    fi ;;
   help|-h|--help) usage ;;
   doctor) cmd_doctor ;;
   contact) cmd_contact "${2:-}" ;;

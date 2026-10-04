@@ -60,7 +60,7 @@ class QualityTests(unittest.TestCase):
 
     def test_listing_suffix_and_bankruptcy(self):
         listing("ABC", "2026-01-01", "2026-10-04", [])
-        for ticker, filings in (("ABCQ", []), ("ABC", [{"date": "2026-08-01", "items": ["1.03"]}])):
+        for ticker, filings in (("ABCDQ", []), ("ABC", [{"date": "2026-08-01", "items": ["1.03"]}])):
             with self.assertRaises(GateError):
                 listing(ticker, "2026-01-01", "2026-10-04", filings)
 
@@ -72,8 +72,16 @@ class QualityTests(unittest.TestCase):
                 attribution("Sponsor", "Competitor", source)
 
     def test_date_type(self):
-        for kind in ("fda_action", "fda_goal"):
-            decision_date(kind)
+        with tempfile.TemporaryDirectory() as tmp:
+            source = Path(tmp) / "announcement.txt"
+            source.write_text("FDA approved the drug on 2026-10-04.\nThe PDUFA goal date is 2026-11-20.\nSubmitted on 2026-10-01.")
+            evidence = dict(source=str(source), line_start=1, line_end=3)
+            decision_date("fda_action", "2026-10-04", evidence)
+            decision_date("fda_goal", "2026-11-20", evidence)
+            with self.assertRaises(GateError):
+                decision_date("fda_goal", "2026-10-01", evidence)
+            with self.assertRaises(GateError):
+                decision_date("fda_goal")
         for kind in ("submission", "readout", "expected_acceptance"):
             with self.assertRaises(GateError):
                 decision_date(kind)

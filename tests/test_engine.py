@@ -8,7 +8,7 @@ import subprocess
 import tempfile
 import unittest
 
-from refclass.engine import build, reaction, report, session_dates
+from refclass.engine import build, reaction, report, session_dates, reconcile_tags
 from tests.support import ROOT, bundle, comparables
 
 
@@ -41,7 +41,7 @@ class TimingTests(unittest.TestCase):
 
 
 class EngineTests(unittest.TestCase):
-    def test_four_comparables_to_cent_and_synthetic_abnormal(self):
+    def test_report_fixture_arithmetic_with_synthetic_benchmark(self):
         data = bundle()
         for row, event in zip(comparables(), data["events"]):
             with self.subTest(company=row["company"]):
@@ -174,6 +174,8 @@ class EngineTests(unittest.TestCase):
     def test_real_tags_cannot_be_self_certified(self):
         data = bundle()
         data["fixture"] = False
+        for price in data["prices"]:
+            price["source"] = "offline test bar"
         for event in data["events"]:
             event["tags"] = [{"feature": "first_product", "value": "yes", "tagger": "reader-one",
                               "locator": "filing L.1", "agreed": True}]
@@ -182,11 +184,14 @@ class EngineTests(unittest.TestCase):
             build(db, data, ROOT / "knowledge")
             result = report(db, "savara", ROOT / "knowledge")
             self.assertEqual(result["classes"][1]["count"], 0)
-            self.assertEqual(result["unknown_first_product"], 4)
+            self.assertEqual(result["excluded"], 4)
+            self.assertTrue(all(reconcile_tags(e)["first_product"] is None for e in data["events"]))
 
     def test_agreed_tags_and_disagreement(self):
         data = bundle()
         data["fixture"] = False
+        for price in data["prices"]:
+            price["source"] = "offline test bar"
         for event in data["events"]:
             event["tags"] = [{"feature": "first_product", "value": value, "tagger": who,
                               "locator": "filing L.1"} for who, value in (("one", "yes"), ("two", "yes"))]
@@ -195,8 +200,8 @@ class EngineTests(unittest.TestCase):
             db = Path(tmp) / "r.sqlite"
             build(db, data, ROOT / "knowledge")
             result = report(db, "savara", ROOT / "knowledge")
-            self.assertEqual(result["classes"][1]["count"], 3)
-            self.assertEqual(result["unknown_first_product"], 1)
+            self.assertEqual(result["excluded"], 4)
+            self.assertEqual(sum(reconcile_tags(e)["first_product"] is True for e in data["events"]), 3)
 
     def test_parser_gaps_are_retained(self):
         data = bundle()
@@ -235,7 +240,7 @@ class CLITests(unittest.TestCase):
             (kit / "deals" / "savara").mkdir(parents=True)
             source = kit / "fixture.json"
             source.write_text(json.dumps(bundle()))
-            for args in (("help",), ("version",), ("refclass", "build", "--input", str(source)),
+            for args in (("help",), ("version",), ("refclass", "build", "--foreground", "--input", str(source)),
                          ("refclass", "show", "savara")):
                 proc = subprocess.run(["bash", str(kit / "run.sh"), *args], capture_output=True, text=True,
                                       timeout=20, env={**os.environ, "PYTHONDONTWRITEBYTECODE": "1"})

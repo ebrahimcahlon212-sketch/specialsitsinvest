@@ -12,9 +12,9 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from refclass.quality import GateError, validate
 
 
-def preflight(directory):
-    path = Path(directory) / "quality.json"
-    mode = os.environ.get("QUALITY_GATES", "legacy")
+def preflight(directory, evidence_path=None):
+    path = Path(evidence_path) if evidence_path and Path(evidence_path).exists() else Path(directory) / "quality.json"
+    mode = os.environ.get("QUALITY_GATES", "strict")
     if mode not in ("legacy", "strict"):
         raise GateError("Quality gates mode must be legacy or strict")
     if not path.exists():

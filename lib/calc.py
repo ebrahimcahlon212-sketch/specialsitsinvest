@@ -18,6 +18,7 @@ import json
 import os
 import re
 import sys
+from pathlib import Path
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from quality_gate import preflight
@@ -234,13 +235,17 @@ def compute(t, prices):
                          "odd_lot_return_withheld": (tprice * (1 - us_dividend_tax()) / (px * (1 + costs)) - 1)
                          if (tender.get("odd_lot_priority") and withheld_case) else None}
         entitlement = num(tender.get("expected_entitlement"))
-        if entitlement is None and rows:
-            entitlement = rows[0]["accepted"]
         if entitlement is not None:
             residual = num(tender.get("expected_residual_price"))
-            residual = px if residual is None else residual
-            res["tender"].update(expected_entitlement=entitlement, expected_residual_price=residual,
+            if residual is None and len(backs) == 1:
+                residual = num(next(iter(backs.values())))
+            if residual is None:
+                warn.append("Partial tender headline unavailable. Supply expected_residual_price or one back_end_prices scenario.")
+            else:
+                res["tender"].update(expected_entitlement=entitlement, expected_residual_price=residual,
                                  headline_return=whole_holding(px * (1 + costs), tprice, entitlement, residual))
+        else:
+            warn.append("Partial tender headline unavailable. Supply expected_entitlement; participation rows are scenarios.")
     # CVRs
     cvr = t.get("cvr") or {}
     if cvr and px:
@@ -422,7 +427,7 @@ def cmd_terms(deal):
 
 def cmd_deal(deal):
     out = os.path.join(deal, "out")
-    preflight(out)
+    preflight(out, evidence_path=Path(out) / "terms.json.quality.json")
     tpath = os.path.join(out, "terms.json")
     if not os.path.exists(tpath):
         sys.exit("No terms.json yet. Run the terms step first.")
@@ -433,9 +438,11 @@ def cmd_deal(deal):
     with open(os.path.join(out, "calc.md"), "w", encoding="utf-8") as fh:
         fh.write(to_markdown(res, warn, t))
     head = "spread %s" % pct(res.get("spread_pct")) if res.get("spread_pct") is not None else "no spread"
+    if res.get("tender"):
+        head = "whole-holding return unavailable"
     if (res.get("tender") or {}).get("headline_return") is not None:
         head = "whole-holding return %s" % pct(res["tender"]["headline_return"])
-    if res.get("scenarios"):
+    if res.get("scenarios") and not res.get("tender"):
         head += ", %s a year to %s" % (pct(res["scenarios"][0]["per_year"]), res["scenarios"][0]["date"])
     print("  calculator  %s%s" % (head, (" (" + "; ".join(warn) + ")") if warn else ""))
 

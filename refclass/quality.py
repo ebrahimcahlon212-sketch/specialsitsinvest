@@ -4,6 +4,8 @@ These checks verify supplied evidence, not the completeness of an SEC search.
 The caller must obtain the source documents and dates first.
 """
 from datetime import date
+from pathlib import Path
+import re
 from .math import abnormal_return, convert, finite, positive, raw_return
 
 
@@ -29,10 +31,15 @@ def freshness(cash_as_of, shares_as_of, latest_10q_period):
         require(date.fromisoformat(value) >= latest, f"Staleness gate failed. {label} predates the latest 10-Q period.")
 
 
-def listing(ticker, as_of, checked_through, filings):
+def listing(ticker, as_of, checked_through, filings, venue=None, suffix_review=None):
     start, end = date.fromisoformat(as_of), date.fromisoformat(checked_through)
     require(end >= start, "Listing gate failed. Filing coverage ends before the as-of date.")
-    require(not ticker.upper().endswith("Q"), "Listing gate failed. Q suffix needs review.")
+    suspect = len(ticker) == 5 and ticker.upper().endswith("Q") and (venue is None or venue.upper() in {"OTC", "OTCQB", "OTCQX", "PINK"})
+    if suspect:
+        require(bool(suffix_review), "Listing gate failed. Fifth-letter Q suffix needs source-backed review.")
+        excerpt = source_excerpt(suffix_review)
+        require(ticker.upper() in excerpt.upper() and bool(suffix_review.get("reason")),
+                "Listing suffix review needs ticker evidence and a reason.")
     for filing in filings:
         when = date.fromisoformat(filing["date"])
         require(not (start <= when <= end and "1.03" in filing["items"]),
@@ -47,8 +54,31 @@ def attribution(company, applicant, economics_source=None):
             "Attribution gate failed. Partner economics need a source and locator.")
 
 
-def decision_date(kind):
+def source_excerpt(evidence):
+    """Re-read an exact, bounded line range in a saved primary document."""
+    require(isinstance(evidence, dict), "Source evidence needs a saved document and line range.")
+    path = Path(evidence["source"])
+    lines = path.read_text().splitlines()
+    start, end = evidence["line_start"], evidence["line_end"]
+    require(isinstance(start, int) and isinstance(end, int) and 1 <= start <= end <= len(lines)
+            and end - start < 50, "Source line range is invalid or too broad.")
+    return " ".join(lines[start - 1:end])
+
+
+def decision_date(kind, value=None, evidence=None):
     require(kind in {"fda_action", "fda_goal"}, "Date type gate failed. Expected an FDA action or goal date.")
+    require(value is not None and evidence is not None, "Date type gate needs the date and primary-source evidence.")
+    day = date.fromisoformat(value)
+    excerpt = source_excerpt(evidence)
+    # Evaluate the sentence containing the date, not a label or a neighbouring goal date.
+    forms = (value, f"{day.strftime('%B')} {day.day}, {day.year}", f"{day.strftime('%b')} {day.day}, {day.year}")
+    sentences = re.split(r"(?<=[.!?])\s+", excerpt)
+    matches = [s for s in sentences if any(form.casefold() in s.casefold() for form in forms)]
+    pattern = (r"(?:PDUFA|target action date|goal date|action date)" if kind == "fda_goal"
+               else r"(?:FDA.{0,100}(?:approved|approval|complete response|rejected)|complete response letter)")
+    require(any(re.search(pattern, s, re.I) and not re.search(
+        r"(?:expect|plan|anticipat|intend|submit|readout)", s, re.I) for s in matches),
+        "Date type gate failed. Source does not unambiguously support this FDA date; review required.")
 
 
 def arithmetic(reported, recomputed, tolerance=0.005):
@@ -103,7 +133,7 @@ def validate(evidence):
             fields = dict(fields)
             reported = fields.pop("headline_return")
             results[name] = check(**fields)
-            arithmetic(reported, results[name], tolerance=1e-9)
+            arithmetic(reported, results[name], tolerance=0.00005 + 1e-12)
         elif name == "arithmetic":
             require(bool(fields), "Arithmetic gate failed. Supply at least one computation.")
             computations = {"runway": runway, "return": raw_return, "abnormal_return": abnormal_return,
@@ -113,7 +143,7 @@ def validate(evidence):
                 if row.get("kind") not in computations:
                     raise GateError("Arithmetic gate failed. Unsupported computation kind.")
                 arithmetic(row["reported"], computations[row["kind"]](**row["inputs"]),
-                           tolerance=.005 if row["kind"] in ("runway", "expected_value") else 1e-9)
+                           tolerance=.005 if row["kind"] in ("runway", "expected_value") else 0.00005 + 1e-12)
             results[name] = "passed"
         else:
             results[name] = check(**fields)

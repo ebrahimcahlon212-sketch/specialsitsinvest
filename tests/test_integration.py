@@ -13,6 +13,7 @@ sys.path.insert(0, str(ROOT / "lib"))
 import calc
 import catalysts
 from refclass.locking import job_lock
+from refclass.jobs import job_key
 
 
 class IntegrationTests(unittest.TestCase):
@@ -49,7 +50,7 @@ class IntegrationTests(unittest.TestCase):
             kit = Path(tmp)
             shutil.copy2(ROOT / "run.sh", kit / "run.sh")
             shutil.copytree(ROOT / "refclass", kit / "refclass")
-            with job_lock(kit / ".locks" / "run.lock"):
+            with job_lock(kit / ".locks" / (job_key(["savara"]) + ".lock")):
                 proc = subprocess.run(["bash", str(kit / "run.sh"), "savara"], capture_output=True, text=True)
                 self.assertNotEqual(proc.returncode, 0)
                 self.assertIn("already running", proc.stderr)
@@ -59,8 +60,8 @@ class IntegrationTests(unittest.TestCase):
         record = dict(anchor_value=10, anchor_currency="GBP", price=800, currency="GBp", date="2026-11-20")
         self.assertAlmostEqual(catalysts.numbers(record)["discount"], .2)
         self.assertAlmostEqual(catalysts.numbers(record)["upside"], .25)
-        with self.assertRaises(ValueError):
-            catalysts.numbers(dict(record, anchor_currency="GBp"))
+        self.assertIn("quality_error", catalysts.numbers(dict(record, anchor_currency="GBp")))
+        self.assertIn("quality_error", catalysts.numbers(dict(record, anchor_currency="JPY")))
 
     def test_legacy_merger_calculation(self):
         res, warnings = calc.compute({"target_ticker": "ABC", "cash_per_share": 12, "currency": "USD"},
@@ -70,7 +71,7 @@ class IntegrationTests(unittest.TestCase):
 
     def test_partial_tender_headline_is_whole_holding(self):
         terms = {"target_ticker": "ABC", "cash_per_share": 137, "currency": "USD",
-                 "tender": {"price": 137, "shares_sought": 10, "shares_outstanding": 100,
+                 "tender": {"price": 137, "expected_entitlement": .1, "shares_sought": 10, "shares_outstanding": 100,
                             "back_end_prices": {"current": 100}}}
         result, warnings = calc.compute(terms, {"ABC": {"price": 100}})
         self.assertAlmostEqual(result["tender"]["headline_return"], .037)

@@ -1,41 +1,37 @@
-I couldn't run the tests. Bash is blocked in this session's permission mode, so `python3 -m unittest discover` and `bash -n run.sh` were both refused. There are also no tests to run. No test files or `tests/` directory exist, and `refclass` appears only in the spec and the commit's note. I did the comparable checks by hand.
+I couldn't run the tests. This session's permission mode blocks running Python through Bash, and both tries to run `python3 -m unittest discover` were refused. To run them yourself, use `python3 -m unittest discover -v` from the kit folder. Everything below comes from reading the code and checking the numbers by hand.
 
-## What the commit contains
+## The four Savara comparables, checked by hand
 
-Commit `8f9caa8` adds one file, `docs/build/codex-1.md`, a status note saying phase 1 is blocked. It changes no code. Its factual claims match the repo:
-- `knowledge/refclass-rules.md` and `knowledge/refclass-features.md` don't exist.
-- There is no `deals/savara/out/report.md`.
-- The comparables are at `deals/savara/out/biotech.md:129-132`.
+| Comparable | Pre → day 1 → day 2 | Window dates | Day 1 | Day 2 | Fixture | Report |
+|---|---|---|---:|---:|---|---|
+| Verona | 14.69 → 15.44 → 14.46 | 26, 27, 28 Jun 2024 | 0.75/14.69 = 5.11% | −0.23/14.69 = −1.57% | 5.11, −1.57 | −1.57% |
+| KalVista | 11.98 → 15.06 → 14.95 | 3, 7, 8 Jul 2025 | 3.08/11.98 = 25.71% | 2.97/11.98 = 24.79% | 25.71, 24.79 | 24.79% |
+| Crinetics | 35.89 → 45.91 → 43.51 | 25, 26, 29 Sep 2025 | 10.02/35.89 = 27.92% | 7.62/35.89 = 21.23% | 27.92, 21.23 | 21.23% |
+| Liquidia | 15.56 → 15.35 → 15.60 | 22, 23, 27 May 2025 | −0.21/15.56 = −1.35% | 0.04/15.56 = 0.26% | −1.35, 0.26 | 0.26% |
 
-## The four comparables, by hand
+- **Prices and returns:** all twelve closes and all eight returns match `deals/savara/out/biotech.md:129-132` to the cent and to two decimal places.
+- **Window dates:** I traced `session_dates` by hand on the fixture inputs and it gives the same pre, day 1 and day 2 dates as the report. Verona and Crinetics have no announcement time, so the engine assumes after the close. KalVista and Liquidia get 08:00 timestamps, which skip the 4 July holiday and Memorial Day.
+- **Blended estimate:** (0.212315 + 0.107443)/2 = 0.159879, and $4.81 × 1.159879 = $5.579, which is $5.58. The fixture README is right. The report's $5.60 does not hold to the cent, but that is a fault in the report, not the code.
 
-| Comparable | Pre-news close → day 1 → day 2 | Day 1 | Day 2 | Report says | Matches? |
-|---|---|---:|---:|---:|---|
-| Verona | 14.69 → 15.44 → 14.46 | +5.106% | −1.566% | −1.57% | Yes |
-| KalVista | 11.98 → 15.06 → 14.95 | +25.710% | +24.791% | 24.79% | Yes |
-| Crinetics | 35.89 → 45.91 → 43.51 | +27.919% | +21.231% | 21.23% | Yes |
-| Liquidia | 15.56 → 15.35 → 15.60 | −1.350% | +0.257% | 0.26% | Yes |
+## Bugs and departures from the spec, most serious first
 
-- **Median of the three core comparables:** 21.231% (matches).
-- **Median of all four:** (0.257 + 21.231) / 2 = 10.744% (matches).
-- **Average of the two medians:** 15.988% (matches).
-- **Event price:** $4.81 × 1.159879 = $5.579, which is **$5.58 to the cent**. The report rounds it to **$5.60**, so that line doesn't hold to the cent.
+1. **The "to the cent" acceptance test is circular.** `tests/support.py:27` copies the report's closes into the fixture, and the test at `tests/test_engine.py:44` checks that the same numbers come back out. That tests the division, not the data. The spec (lines 55 and 192) expects the closes to come from IBKR bars. Two of the four windows depend on 08:00 timestamps that the fixture README admits are synthetic, so the test does not establish that the windows are right either.
+2. **Phase 1 collects no data.** Nothing fetches Drugs@FDA, openFDA CRLs, EDGAR 8-Ks or IBKR bars, so there is no census of approvals and CRLs since 2015 (spec lines 50–55 and 191). The "events found" and "could not price" counts only describe a hand-supplied JSON snapshot, and the production `refclass show savara` prints an empty table. `docs/refclass-phase1.md:58` admits this.
+3. **The XBI benchmark is synthetic.** It is fixed at 100, 102 and 101 for every event (`tests/support.py:29`). Every abnormal return in the tests and in `show` output measures against fake index levels, and no real XBI series is sourced anywhere.
+4. **The quality gates are switched off by default.** `lib/quality_gate.py:17` defaults to `legacy`, and in that mode a missing `quality.json` only prints a warning. Nothing in the kit creates `quality.json`, so on a real run none of the eight gates fire unless someone writes the evidence by hand. The spec (line 146) says a failed check stops the step.
+5. **Strict mode cannot work in practice.** `run.sh:140` runs the gate before every model call, including the first research step, and that step happens before the research that would produce the evidence. With `QUALITY_GATES=strict`, every deal run would stop at its first step. The spec wants the gates before a card or model is written, not before reading.
+6. **The arithmetic gate rejects correctly rounded numbers.** Returns, abnormal returns, annualized returns, whole-holding returns and discounts are checked to 1e-9 (`refclass/quality.py:117`, and `:103` for partial tenders). A report that quotes 21.23% as 0.2123 against 0.212315 fails, because the difference is 1.5e-5.
+7. **The partial-tender headline is mislabelled.** `lib/calc.py:237-238` falls back to `rows[0]["accepted"]`, which is the 100%-participation proration (the worst case), but labels it "expected entitlement". The residual value then defaults to the current price (`calc.py:241`) and ignores any `back_end_prices` the terms supply. The HVPE-type gate therefore headlines a number built on assumptions nobody stated.
+8. **The run lock covers the whole kit, not one job.** `refclass/jobs.py` takes one kernel lock for every non-trivial `run.sh` command. While any deal run is going, commands like `NAME ask`, `knowledge`, `ledger verify` and `NAME view`, or a run on a different deal, are all refused. The spec (lines 157 and 220) only asks to refuse a second start of the same job. This also breaks "keep every existing command working" (line 216).
+9. **Upgrades don't ship the rules files.** `lib/upgrade.py:24` adds `refclass/` and `tests/` but not `knowledge/refclass-rules.md` or `refclass-features.md`. `knowledge/` is user data, and `lib/knowledge.py` does not seed these files. After a zip upgrade, every `refclass` command would stop with a missing-file error from `conventions()` (I inferred this from the code and did not reproduce it).
+10. **The catalyst calculator can now crash the whole render.** `lib/catalysts.py:144-148` now calls `convert` and `discount`, which raise errors on any currency outside USD, GBP, GBp, GBX and EUR, or on a discount outside −50% to 90%. One odd record stops the entire catalyst render. The spec says to flag that discount range, and before this commit the render produced output.
+11. **`refclass build` does not run as a logged background job.** Spec line 167 says it runs in the background, and line 220 says long jobs write logs under `~/`. Here it runs in the foreground with no log.
+12. **`refclass show NAME` ignores NAME.** `refclass/engine.py:285` checks that the deal folder exists, then prints the same global classes for every deal. Spec line 169 says "for a deal".
+13. **The date-type gate trusts its input label.** `decision_date(kind)` only checks a label that the caller supplies. The Opus and Viridian errors were exactly a submission date labelled as an FDA date, so this gate would not have caught them.
+14. **The listing gate's Q check gives false positives.** `ticker.upper().endswith("Q")` flags normal tickers such as NDAQ. The bankruptcy convention is a fifth-letter Q on over-the-counter tickers, and there is no way to override the flag.
+15. **Minor: three gate inputs are taken on trust, not checked.** For `listed_us`, partner economics, and "latest filing before the event" for shares, `exclusion()` and `market_value()` rely on flags the caller supplies, which `docs/refclass-phase1.md:32` acknowledges.
+16. **Housekeeping.** The working tree has `docs/build/review-1.md` emptied (41 lines deleted, not committed). The committed copy is a review of the previous commit and is now stale.
 
-I checked only the arithmetic. I did not check the closing prices themselves against a price source.
+What is sound: the odds-form posterior, the 90% Wilson interval, the simple abnormal return, Decimal currency conversion with explicit FX rates, atomic rebuilds, keeping delisted and unpriced events, flagging unknown announcement times, and computing tag agreement instead of trusting an `agreed` flag. All of these match the spec and have unit tests.
 
-## Problems and departures from the spec, most serious first
-
-1. **None of phase 1 is delivered.** There is no refclass package, no `data/refclass.sqlite`, no quality gates, no new `run.sh` subcommands and no unit tests. All four acceptance tests at `docs/system-spec.md:192-195` are unmet, with the deadline on 13 November.
-2. **Stopping everything was more than the blocker required.** The missing rules file does block the nested classes for `refclass show savara`. The features file is a phase 2 item, because tagging, likelihood ratios and rates come in phase 2. A lot needs neither file:
-   - The phase 1 event filter is already set out in the spec at line 191 (approvals and CRLs since 2015, first products, companies under $3 billion).
-   - Five things need no rules file at all: the eight quality gates, the run lock, the unit tests for odds form, Wilson intervals, abnormal returns and currency conversion (spec line 217), and the event and price tables.
-
-   Spec line 213 asks for small steps, so these could have been built.
-3. **The "to the cent" acceptance test conflicts with the rest of the spec.** The Savara figures are raw returns from ChartExchange closes. The engine is meant to use IBKR bars (spec line 55) and report abnormal returns against XBI (line 91). Matching to the cent would need the same unadjusted closes and a raw-return output. The note spots that XBI is missing but not the clash between data sources.
-4. **Using the report's prices as test fixtures would prove nothing.** The note proposes copying the biotech report's prices into the tests. The engine would then "reproduce" numbers it was given, which tests the arithmetic but not the price pipeline the acceptance test is meant to check.
-5. **The comparables use different announcement-timing conventions.** For Verona and Crinetics the pre-news close is on the announcement day, so the news came after the close. For KalVista and Liquidia it is the previous trading day. A fixed "close before the announcement date" rule would fail on two of the four. This ties to the spec's requirement to mark unknown announcement times (line 194), and the note doesn't raise it.
-6. **Some claims in the note can't be confirmed.** "Searched ... backups" can't be checked. "`bash -n run.sh` passed" is plausible because the commit doesn't touch `run.sh`, but I couldn't re-run it.
-7. **Housekeeping.** `docs/build/review-1.md` is untracked and appears empty.
-8. **Minor defects in the spec itself.** The byline at line 3 reads "@Poop". The flow diagram at line 18 exported as a placeholder. Line 223 has a double space ("avoid  jargon").
-
-**Verdict:** The block is honest and partly justified, but the commit delivers nothing from phase 1 and stops more work than the missing files actually block.
+**Verdict:** The arithmetic is right and the four comparables match to the cent, but phase 1 is not accepted, because the comparable test is circular, no real data or XBI series is sourced, and the quality gates are off by default.

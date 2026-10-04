@@ -22,6 +22,7 @@ import zipfile
 
 PROGRAM = ["run.sh", "AGENTS.md", "CLAUDE.md", "README.md", "VERSION", "LICENSE", ".gitignore", "settings.example.env",
            "lib/", "prompts/", "templates/", "docs/", "case-studies/", "refclass/", "tests/"]
+SEED_ONLY = {"knowledge/refclass-rules.md", "knowledge/refclass-features.md"}
 PATTERNS = ["~/special-sits-kit*.zip", "~/Downloads/special-sits-kit*.zip",
             "/mnt/c/Users/*/Downloads/special-sits-kit*.zip", "/mnt/c/Users/*/Desktop/special-sits-kit*.zip",
             "/mnt/c/Users/*/OneDrive*/Downloads/special-sits-kit*.zip", "/mnt/c/Users/*/OneDrive*/Desktop/special-sits-kit*.zip"]
@@ -88,9 +89,11 @@ def install(kit, path):
             if "special-sits-kit/" not in name or name.endswith("/"):
                 continue
             rel = name.split("special-sits-kit/", 1)[1]
-            if not any(rel == p or (p.endswith("/") and rel.startswith(p)) for p in PROGRAM) or "__pycache__" in rel:
+            if not (rel in SEED_ONLY or any(rel == p or (p.endswith("/") and rel.startswith(p)) for p in PROGRAM)) or "__pycache__" in rel:
                 continue
             dest = os.path.join(kit, rel)
+            if rel in SEED_ONLY and os.path.exists(dest):
+                continue
             os.makedirs(os.path.dirname(dest), exist_ok=True)
             tmp = dest + ".new"
             with open(tmp, "wb") as fh:
