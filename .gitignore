@@ -1,0 +1,19 @@
+# Personal settings and data stay on your machine
+settings.env
+deals/*
+!deals/halvern/
+deals/halvern/work/
+deals/halvern/out/viewer.html
+deals/halvern/out/raw/
+deals/halvern/out/logs/
+deals/halvern/out/prompts/
+finder/
+journal/
+ledger/
+library/
+knowledge/
+.backups/
+.last_promoted
+__pycache__/
+*.pyc
+*.log

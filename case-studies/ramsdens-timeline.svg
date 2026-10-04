@@ -1,0 +1,37 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 760 324" font-family="Helvetica, Arial, sans-serif" font-size="13">
+<rect width="760" height="324" fill="#ffffff"/>
+<text x="24" y="28" font-size="15" font-weight="600" fill="#1d1d1b">Store sales would likely run past the 31 December deadline</text>
+<text x="24" y="48" font-size="11.5" fill="#6b6a64">Estimated path if phase 1 of the CMA review starts on 1 October 2026</text>
+<line x1="202.9" x2="202.9" y1="88" y2="300" stroke="#e6e3da"/>
+<text x="202.9" y="78" text-anchor="middle" font-size="11.5" fill="#6b6a64">Oct</text>
+<line x1="293.1" x2="293.1" y1="88" y2="300" stroke="#e6e3da"/>
+<text x="293.1" y="78" text-anchor="middle" font-size="11.5" fill="#6b6a64">Nov</text>
+<line x1="380.4" x2="380.4" y1="88" y2="300" stroke="#e6e3da"/>
+<text x="380.4" y="78" text-anchor="middle" font-size="11.5" fill="#6b6a64">Dec</text>
+<line x1="470.7" x2="470.7" y1="88" y2="300" stroke="#e6e3da"/>
+<text x="470.7" y="78" text-anchor="middle" font-size="11.5" fill="#6b6a64">Jan</text>
+<line x1="560.9" x2="560.9" y1="88" y2="300" stroke="#e6e3da"/>
+<text x="560.9" y="78" text-anchor="middle" font-size="11.5" fill="#6b6a64">Feb</text>
+<line x1="200" x2="590" y1="88" y2="88" stroke="#9a978e" stroke-width="1.25"/>
+<line x1="467.8" x2="467.8" y1="88" y2="300" stroke="#2563c9" stroke-width="1.25" stroke-dasharray="4 4"/>
+<line x1="200" x2="200.0" y1="118" y2="118" stroke="#e6e3da"/>
+<path d="M200.0 110 l8 8 l-8 8 l-8 -8z" fill="#9a978e"/>
+<text x="214.0" y="122" font-size="11.5" fill="#6b6a64">Sep 30</text>
+<text x="24" y="122" fill="#1d1d1b">Decision logged</text>
+<line x1="200" x2="202.9" y1="158" y2="158" stroke="#e6e3da"/>
+<rect x="202.9" y="151" width="160.1" height="14" rx="7" fill="#9a978e" fill-opacity="0.18" stroke="#9a978e" stroke-width="1.25"/>
+<text x="202.9" y="146" font-size="11" fill="#6b6a64">Oct 1 to Nov 25</text>
+<text x="24" y="162" fill="#1d1d1b">Phase 1 review</text>
+<line x1="200" x2="363.0" y1="198" y2="198" stroke="#e6e3da"/>
+<rect x="363.0" y="191" width="224.1" height="14" rx="7" fill="#9a978e" fill-opacity="0.18" stroke="#9a978e" stroke-width="1.25"/>
+<text x="363.0" y="186" font-size="11" fill="#6b6a64">Nov 25 to Feb 10</text>
+<text x="24" y="202" fill="#1d1d1b">Store sales agreed</text>
+<line x1="200" x2="467.8" y1="238" y2="238" stroke="#e6e3da"/>
+<path d="M467.8 230 l8 8 l-8 8 l-8 -8z" fill="#2563c9"/>
+<text x="481.8" y="242" font-size="11.5" fill="#1d1d1b" font-weight="600">Dec 31</text>
+<text x="24" y="242" fill="#1d1d1b" font-weight="600">Long stop date</text>
+<line x1="200" x2="590.0" y1="278" y2="278" stroke="#e6e3da"/>
+<path d="M590.0 270 l8 8 l-8 8 l-8 -8z" fill="#9a978e"/>
+<text x="604.0" y="282" font-size="11.5" fill="#6b6a64">Feb 11</text>
+<text x="24" y="282" fill="#1d1d1b">Certain funds end</text>
+</svg>
