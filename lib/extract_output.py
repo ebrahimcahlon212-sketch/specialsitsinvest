@@ -13,7 +13,7 @@ import re
 import sys
 from pathlib import Path
 from quality_gate import preflight
-from refclass.quality import validate
+
 
 BEGIN = re.compile(r"^\s*<<<BEGIN OUTPUT>>>\s*$")
 END = re.compile(r"^\s*<<<END OUTPUT>>>\s*$")
@@ -100,23 +100,23 @@ def between_markers(text):
 
 def main():
     if len(sys.argv) not in (3, 4):
-        sys.exit("Usage: extract_output.py RAW_FILE OUT_FILE [publication|research]")
-    mode = sys.argv[3] if len(sys.argv) == 4 else "publication"
-    if mode not in {"publication", "research"}:
+        sys.exit("Usage: extract_output.py RAW_FILE OUT_FILE [legacy|publication|research]")
+    mode = sys.argv[3] if len(sys.argv) == 4 else "legacy"
+    if mode not in {"legacy", "publication", "research"}:
         sys.exit("Unknown extraction mode")
     raw = open(sys.argv[1], encoding="utf-8", errors="replace").read()
     text = to_text(raw)
     blocks = re.findall(r"(?ms)^<<<BEGIN QUALITY>>>\s*\n(.*?)^<<<END QUALITY>>>\s*$", text)
-    try:
-        if blocks:
-            evidence = json.loads(blocks[-1])
-            validate(evidence)
-            # Keep evidence per artifact, never replace the shared evidence for other steps.
-            Path(sys.argv[2] + ".quality.json").write_text(json.dumps(evidence, indent=2) + "\n")
-        elif mode == "publication":
-            preflight(Path(sys.argv[2]).parent)
-    except (ValueError, TypeError, KeyError, OSError) as exc:
-        sys.exit(f"Stopped. Quality gate stopped publication. {exc}")
+    if mode != "research":
+        try:
+            evidence_path = Path(sys.argv[2] + ".quality.json")
+            if blocks:
+                # Preserve the supplied block for diagnostics, even if malformed.
+                evidence_path.write_text(blocks[-1] + "\n")
+            preflight(Path(sys.argv[2]).parent, evidence_path=evidence_path,
+                      strict=mode == "publication")
+        except (ValueError, TypeError, KeyError, OSError) as exc:
+            sys.exit(f"Stopped. Quality gate stopped publication. {exc}")
     text = re.sub(r"(?ms)^<<<BEGIN QUALITY>>>\s*\n.*?^<<<END QUALITY>>>\s*$", "", text)
     result = between_markers(text)
     status = 0

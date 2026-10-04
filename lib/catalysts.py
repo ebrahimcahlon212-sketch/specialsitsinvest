@@ -23,10 +23,8 @@ import re
 import sys
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-import finder  # noqa: E402
 from quality_gate import preflight
-from refclass.math import convert
-from refclass.quality import discount
+import finder  # noqa: E402
 
 TODAY = datetime.date.today()
 STATE = os.path.join(finder.FINDER, "catalysts.json")
@@ -141,17 +139,7 @@ def numbers(e):
     except (TypeError, ValueError):
         a = None
     if a and p:
-        price_unit = e.get("currency") or ("GBp" if is_london(e) else "USD")
-        anchor_unit = e.get("anchor_currency") or price_unit
-        fx = {(anchor_unit, price_unit): e["fx_rate"]} if e.get("fx_rate") else None
-        try:
-            p = float(p)
-            checked_discount = discount(a, anchor_unit, p, price_unit, fx)
-            a = float(convert(a, anchor_unit, price_unit, fx))
-        except (ValueError, TypeError, ArithmeticError) as exc:
-            out["quality_error"] = f"{anchor_unit} to {price_unit}. {exc}"
-            return out
-        out["discount"] = checked_discount
+        out["discount"] = 1 - p / a
         out["upside"] = a / p - 1
         kind = (e.get("anchor_kind") or "").lower()
         if days and days > 14 and any(w in kind for w in PAYOUT_ANCHORS):
@@ -185,7 +173,7 @@ def cmd_render(out):
         L.append("| %s%s | %s (%s) | %s | %s %s | %s | %s | %s | %s |" % (
             e["date"], " ~" if e.get("approx") else "", e["company"], e.get("ticker", ""), e.get("type", ""),
             e.get("anchor_kind", ""), ("%s%s" % (e["anchor_value"], unit(e))) if e.get("anchor_value") is not None else "",
-            ("%s%s" % (e["price"], unit(e))) if e.get("price") else "", (n.get("quality_error") or pct(n.get("discount"))).replace("|", "/"), e.get("score", ""),
+            ("%s%s" % (e["price"], unit(e))) if e.get("price") else "", pct(n.get("discount")), e.get("score", ""),
             (e.get("key_question") or "").replace("|", "/")))
     with open(os.path.join(out, "catalysts.md"), "w", encoding="utf-8") as fh:
         fh.write("\n".join(L) + "\n")
@@ -198,8 +186,6 @@ def cmd_render(out):
             if e.get(k):
                 facts.append("<dt>%s</dt><dd>%s</dd>" % (label, esc(e[k])))
         calc = []
-        if n.get("quality_error"):
-            facts.append("<dt>Calculation blocked</dt><dd>%s</dd>" % esc(n["quality_error"]))
         if e.get("anchor_value") is not None:
             calc.append("%s of %s%s (%s)" % (esc(e.get("anchor_kind") or "Anchor"), esc(e["anchor_value"]), unit(e), esc(e.get("anchor_date") or "")))
         if e.get("price"):

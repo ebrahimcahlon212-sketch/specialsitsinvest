@@ -1,0 +1,181 @@
+{
+  "baseline": "1429cc8",
+  "as_of": "2026-10-04",
+  "cases": [
+    {
+      "module": "calc",
+      "label": "merger",
+      "input": {
+        "target_ticker": "ABC",
+        "cash_per_share": 12,
+        "currency": "USD",
+        "close_dates": [
+          "2026-12-31"
+        ]
+      },
+      "prices": {
+        "ABC": {
+          "price": 10
+        }
+      },
+      "result": [
+        {
+          "currency": "USD",
+          "target": "ABC",
+          "price": 10.0,
+          "price_source": "last",
+          "dividend_tax": 0.0,
+          "withheld_case": false,
+          "otc": false,
+          "price_time": "",
+          "acquirer": "",
+          "acquirer_price": null,
+          "deal_value": 12.0,
+          "costs_pct": 0.0,
+          "spread": 2.0,
+          "spread_pct": 0.2,
+          "scenarios": []
+        },
+        []
+      ],
+      "markdown": "## Numbers from the calculator\n\nWorked out by Python from the extracted terms and the latest prices, on 2026-10-04. The price used for ABC is $10.00 (last). Returns are simple, not compounded, and per-year figures use calendar days.\n\n| Item | Value |\n|---|---|\n| Deal value per share | $12.00 |\n| Spread, unhedged | $2.00 (20.00%) |\n"
+    },
+    {
+      "module": "calc",
+      "label": "partial tender",
+      "input": {
+        "target_ticker": "ABC",
+        "cash_per_share": 137,
+        "currency": "USD",
+        "tender": {
+          "price": 137,
+          "shares_sought": 10,
+          "shares_outstanding": 100,
+          "back_end_prices": {
+            "flat": 100
+          }
+        }
+      },
+      "prices": {
+        "ABC": {
+          "price": 100
+        }
+      },
+      "result": [
+        {
+          "currency": "USD",
+          "target": "ABC",
+          "price": 100.0,
+          "price_source": "last",
+          "dividend_tax": 0.0,
+          "withheld_case": false,
+          "otc": false,
+          "price_time": "",
+          "acquirer": "",
+          "acquirer_price": null,
+          "deal_value": 137.0,
+          "costs_pct": 0.0,
+          "spread": 37.0,
+          "spread_pct": 0.37,
+          "scenarios": [],
+          "tender": {
+            "price": 137.0,
+            "rows": [
+              {
+                "participation": 1.0,
+                "accepted": 0.1,
+                "break_even_back_end": 95.88888888888889,
+                "results": [
+                  {
+                    "back_end": "flat",
+                    "price": 100.0,
+                    "return": 0.03699999999999992,
+                    "per_year": null
+                  }
+                ]
+              },
+              {
+                "participation": 0.75,
+                "accepted": 0.13333333333333333,
+                "break_even_back_end": 94.3076923076923,
+                "results": [
+                  {
+                    "back_end": "flat",
+                    "price": 100.0,
+                    "return": 0.04933333333333345,
+                    "per_year": null
+                  }
+                ]
+              },
+              {
+                "participation": 0.5,
+                "accepted": 0.2,
+                "break_even_back_end": 90.74999999999999,
+                "results": [
+                  {
+                    "back_end": "flat",
+                    "price": 100.0,
+                    "return": 0.07400000000000007,
+                    "per_year": null
+                  }
+                ]
+              },
+              {
+                "participation": 0.25,
+                "accepted": 0.4,
+                "break_even_back_end": 75.33333333333333,
+                "results": [
+                  {
+                    "back_end": "flat",
+                    "price": 100.0,
+                    "return": 0.14800000000000013,
+                    "per_year": null
+                  }
+                ]
+              }
+            ],
+            "days": null,
+            "odd_lot": false,
+            "odd_lot_return": null,
+            "odd_lot_return_withheld": null
+          }
+        },
+        []
+      ],
+      "markdown": "## Numbers from the calculator\n\nWorked out by Python from the extracted terms and the latest prices, on 2026-10-04. The price used for ABC is $100.00 (last). Returns are simple, not compounded, and per-year figures use calendar days.\n\n| Item | Value |\n|---|---|\n| Deal value per share | $137.00 |\n| Spread, unhedged | $37.00 (37.00%) |\n\n### Partial tender, by how many holders tender\n\nAccepted is the share of your tendered shares the bidder buys. The rest you keep at the back-end price.\n\n| Holders tendering | Accepted | Break-even back-end price | Return if back end is flat ($100.00) |\n|---|---|---|---|\n| 100.00% | 10.00% | $95.89 | 3.70% |\n| 75.00% | 13.33% | $94.31 | 4.93% |\n| 50.00% | 20.00% | $90.75 | 7.40% |\n| 25.00% | 40.00% | $75.33 | 14.80% |\n"
+    },
+    {
+      "module": "catalysts",
+      "label": "same currency",
+      "input": {
+        "anchor_value": 10,
+        "price": 8,
+        "currency": "GBP",
+        "anchor_currency": "GBP",
+        "date": "2026-11-20"
+      },
+      "prices": null,
+      "result": {
+        "days": 47,
+        "discount": 0.19999999999999996,
+        "upside": 0.25
+      }
+    },
+    {
+      "module": "catalysts",
+      "label": "extreme discount",
+      "input": {
+        "anchor_value": 100,
+        "price": 1,
+        "currency": "USD",
+        "date": "2026-11-20"
+      },
+      "prices": null,
+      "result": {
+        "days": 47,
+        "discount": 0.99,
+        "upside": 99.0
+      }
+    }
+  ]
+}

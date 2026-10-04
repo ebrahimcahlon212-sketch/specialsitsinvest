@@ -137,17 +137,6 @@ run_step() {
   local model="$1" prompt="$2" label="$3" final="$4" mode="${5:-}"
   local raw="$OUT/raw/$label.$model.txt" log="$OUT/logs/$label.$model.log"
   local start rc
-  cat >> "$prompt" <<'QUALITY_INSTRUCTIONS'
-
-For a published report, return a JSON evidence object between standalone
-<<<BEGIN QUALITY>>> and <<<END QUALITY>>> lines, outside the OUTPUT block.
-Use lib/quality_gate.py and refclass/quality.py for the schema. Include units,
-staleness, listing, attribution, date_type, arithmetic and partial_tender.
-Use {"not_applicable": "specific reason"} only for inapplicable checks.
-Arithmetic must include each reported computation with its inputs and result.
-Date evidence requires a saved source path and line_start/line_end; code rereads it.
-Missing or failed evidence blocks publication. Do not invent passing evidence.
-QUALITY_INSTRUCTIONS
   start=$(date +%s)
   say "[$label] $model started. Progress log in $(rel "$log")"
   case "$model" in
@@ -179,15 +168,14 @@ QUALITY_INSTRUCTIONS
   if [ "$rc" -ne 0 ]; then
     warn "[$label] $model exited with code $rc. Its reply was kept, but check $(rel "$log")"
   fi
-  local extraction_mode="publication"
-  case "$label" in
-    draft|review*|map|terms|quotes|ukquotes|remember|feedback|*triage*|bio-cards-*|catalysts|uk-events) extraction_mode="research" ;;
-  esac
+  # Model steps are research. Only final publication runs warn-only legacy gates.
+  local extraction_mode="research"
+  case "$label" in final|fund-final) extraction_mode="legacy" ;; esac
   "$PYTHON" "$KIT/lib/extract_output.py" "$raw" "$final" "$extraction_mode"
   case $? in
     0) ;;
     2) warn "[$label] $model did not mark its output, so its whole reply was saved." ;;
-    *) warn "[$label] could not read the reply from $model. The raw reply is in $(rel "$raw")"; return 1 ;;
+    *) warn "[$label] output extraction failed for $model. See the error above. The raw reply is in $(rel "$raw")"; return 1 ;;
   esac
   say "[$label] $model finished in $(( $(date +%s) - start )) seconds. Saved $(rel "$final")"
 }
@@ -1184,6 +1172,7 @@ Usage
   ./run.sh refclass build [--input FILE]   import a sourced snapshot in a logged background job
   ./run.sh refclass update [--input FILE]  merge newly sourced events and prices
   ./run.sh refclass show NAME             print nested event-price classes and counts
+  ./run.sh refclass collect SOURCE --cache DIR --output FILE  collect bounded source candidates
   ./run.sh refclass gates FILE            check structured quality evidence
   ./run.sh doctor              check that the tools are installed and signed in
   ./run.sh upgrade             install the newest kit zip from your Downloads, keeping your settings and deals
@@ -1255,9 +1244,13 @@ case "${1:-help}" in
   refclass)
     shift
     if [ "${1:-}" = build ] || [ "${1:-}" = update ]; then
-      if [ "${2:-}" = --foreground ]; then
-        command="$1"; shift 2
-        "$PYTHON" -m refclass "$command" "$@" || exit $?
+      foreground=false
+      refclass_args=()
+      for arg in "$@"; do
+        if [ "$arg" = --foreground ]; then foreground=true; else refclass_args+=("$arg"); fi
+      done
+      if "$foreground"; then
+        "$PYTHON" -m refclass "${refclass_args[@]}" || exit $?
       else
         "$PYTHON" -m refclass.background "$@" || exit $?
       fi

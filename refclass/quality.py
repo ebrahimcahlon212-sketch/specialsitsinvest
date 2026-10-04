@@ -3,10 +3,14 @@
 These checks verify supplied evidence, not the completeness of an SEC search.
 The caller must obtain the source documents and dates first.
 """
+from contextvars import ContextVar
 from datetime import date
 from pathlib import Path
 import re
 from .math import abnormal_return, convert, finite, positive, raw_return
+
+
+_DEAL_ROOT = ContextVar("quality_deal_root", default=None)
 
 
 class GateError(ValueError):
@@ -54,10 +58,23 @@ def attribution(company, applicant, economics_source=None):
             "Attribution gate failed. Partner economics need a source and locator.")
 
 
-def source_excerpt(evidence):
+def source_excerpt(evidence, deal_root=None):
     """Re-read an exact, bounded line range in a saved primary document."""
     require(isinstance(evidence, dict), "Source evidence needs a saved document and line range.")
     path = Path(evidence["source"])
+    root = deal_root or _DEAL_ROOT.get()
+    if root is None:
+        # Direct callers must name a deal, never infer trust from a folder
+        # merely named work inside model output.
+        root = next((p for p in reversed(path.absolute().parents) if p.parent.name == "deals"), None)
+    require(root is not None, "Source gate needs a trusted deal root.")
+    root = Path(root).resolve()
+    if not path.is_absolute():
+        path = root / path
+    path = path.resolve()
+    allowed = [root / "filings", root / "work"]
+    require(any(path.is_relative_to(p) and p.resolve() == p for p in allowed),
+            "Source gate only reads this deal's filings or work folders.")
     lines = path.read_text().splitlines()
     start, end = evidence["line_start"], evidence["line_end"]
     require(isinstance(start, int) and isinstance(end, int) and 1 <= start <= end <= len(lines)
@@ -70,15 +87,20 @@ def decision_date(kind, value=None, evidence=None):
     require(value is not None and evidence is not None, "Date type gate needs the date and primary-source evidence.")
     day = date.fromisoformat(value)
     excerpt = source_excerpt(evidence)
-    # Evaluate the sentence containing the date, not a label or a neighbouring goal date.
-    forms = (value, f"{day.strftime('%B')} {day.day}, {day.year}", f"{day.strftime('%b')} {day.day}, {day.year}")
+    # Protect abbreviated months from sentence splitting, then bind the date
+    # to an FDA clause. A submission date elsewhere in the sentence is not an action.
+    excerpt = re.sub(r"\b(Jan|Feb|Mar|Apr|Jun|Jul|Aug|Sep|Sept|Oct|Nov|Dec)\.", r"\1", excerpt, flags=re.I)
+    month = rf"(?:{day.strftime('%B')}|{day.strftime('%b')})"
+    dates = rf"(?:{re.escape(value)}|{month}\s+{day.day},?\s+{day.year}|{day.day}\s+{month}\s+{day.year})"
     sentences = re.split(r"(?<=[.!?])\s+", excerpt)
-    matches = [s for s in sentences if any(form.casefold() in s.casefold() for form in forms)]
-    pattern = (r"(?:PDUFA|target action date|goal date|action date)" if kind == "fda_goal"
-               else r"(?:FDA.{0,100}(?:approved|approval|complete response|rejected)|complete response letter)")
-    require(any(re.search(pattern, s, re.I) and not re.search(
-        r"(?:expect|plan|anticipat|intend|submit|readout)", s, re.I) for s in matches),
-        "Date type gate failed. Source does not unambiguously support this FDA date; review required.")
+    if kind == "fda_goal":
+        pattern = rf"(?:PDUFA(?: target)?(?: action)?(?: goal)? date|target action date|goal date|action date)\s*(?:of|is|was|has been set for|set for|for|on|:)?\s*{dates}"
+    else:
+        pattern = rf"(?:FDA (?:has )?approved|FDA (?:has )?rejected|received (?:a |an )?complete response letter).{{0,100}}?{dates}"
+    require(any(re.search(pattern, sentence, re.I) and
+                (kind == "fda_goal" or not re.search(r"expect|anticipat|plan|intend", sentence, re.I))
+                for sentence in sentences),
+            "Date type gate failed. Source does not unambiguously support this FDA date; review required.")
 
 
 def arithmetic(reported, recomputed, tolerance=0.005):
@@ -114,7 +136,7 @@ def expected_value(outcomes):
     return sum(p * finite(row["value"]) for p, row in zip(probs, outcomes))
 
 
-def validate(evidence):
+def _validate(evidence):
     """Run all applicable sections. Every gate must be present or explicitly N/A.
 
     N/A is {"not_applicable": "reason"}. A missing section is never a pass.
@@ -127,6 +149,7 @@ def validate(evidence):
         require(name in evidence, f"Quality gate evidence missing. {name}")
         fields = evidence[name]
         if isinstance(fields, dict) and fields.get("not_applicable"):
+            require(name != "arithmetic", "Arithmetic gate requires computations, not an N/A assertion.")
             results[name] = {"not_applicable": fields["not_applicable"]}
             continue
         if name == "partial_tender":
@@ -148,3 +171,12 @@ def validate(evidence):
         else:
             results[name] = check(**fields)
     return results
+
+
+def validate(evidence, *, deal_root=None):
+    token = _DEAL_ROOT.set(deal_root)
+    try:
+        require(isinstance(evidence, dict), "Quality evidence must be an object.")
+        return _validate(evidence)
+    finally:
+        _DEAL_ROOT.reset(token)

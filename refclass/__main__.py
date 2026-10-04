@@ -25,8 +25,40 @@ def main(argv=None):
     show.add_argument("--db", type=Path, default=Path(os.environ.get("REFCLASS_DB", root / "data" / "refclass.sqlite")))
     quality = sub.add_parser("gates", help="Validate a structured quality evidence JSON file")
     quality.add_argument("evidence", type=Path)
+    collect = sub.add_parser("collect", help="Collect bounded FDA or EDGAR source candidates for review")
+    collect.add_argument("source", choices=("drugs_at_fda", "openfda_crl", "edgar"))
+    collect.add_argument("--cache", type=Path, required=True)
+    collect.add_argument("--output", type=Path, required=True)
+    collect.add_argument("--offline", action="store_true", help="Replay only saved cache responses")
+    collect.add_argument("--settings", type=Path, default=root / "settings.env")
+    collect.add_argument("--since", default="2015-01-01")
+    collect.add_argument("--until", default=date.today().isoformat())
+    collect.add_argument("--page-size", type=int, default=10)
+    collect.add_argument("--max-pages", type=int, default=1)
+    collect.add_argument("--search")
+    collect.add_argument("--cik")
+    collect.add_argument("--max-filings", type=int, default=1)
+    collect.add_argument("--max-history", type=int, default=1)
+    collect.add_argument("--max-exhibits", type=int, default=2)
     args = parser.parse_args(argv)
     try:
+        if args.command == "collect":
+            from .collectors.http import Client, saved_contact
+            from .collectors import fda, edgar
+            contact = saved_contact(args.settings) if args.source == "edgar" and not args.offline else None
+            client = Client(args.cache, contact=contact, offline=args.offline)
+            if args.source == "edgar":
+                result = edgar.collect(client, args.cik, since=args.since, until=args.until,
+                                       max_filings=args.max_filings, max_history=args.max_history,
+                                       max_exhibits=args.max_exhibits)
+            else:
+                result = fda.collect(client, args.source, since=args.since, until=args.until,
+                                     page_size=args.page_size, max_pages=args.max_pages, search=args.search)
+            result["stage"] = "source_candidates_not_verified_events"
+            args.output.parent.mkdir(parents=True, exist_ok=True)
+            args.output.write_text(json.dumps(result, indent=2) + "\n")
+            print(f"Saved {args.output}. Source gaps {result['gap_count']}. Candidates still need verification.")
+            return 1 if result["gaps"] else 0
         if args.command == "gates":
             print(json.dumps(validate(json.loads(args.evidence.read_text())), indent=2))
             return 0

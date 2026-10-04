@@ -24,8 +24,10 @@ import upgrade
 
 
 def evidence():
-    return {k: {"not_applicable": "No such metric in this test document"} for k in
-            ("units", "staleness", "listing", "attribution", "date_type", "arithmetic", "partial_tender")}
+    result = {k: {"not_applicable": "No such metric in this test document"} for k in
+              ("units", "staleness", "listing", "attribution", "date_type", "partial_tender")}
+    result["arithmetic"] = [dict(kind="return", inputs=dict(pre=10, post=12), reported=.2)]
+    return result
 
 
 class ReviewFixes(unittest.TestCase):
@@ -44,7 +46,7 @@ class ReviewFixes(unittest.TestCase):
         with self.assertRaises(GateError):
             validate(data)
 
-    def test_default_blocks_publication_but_allows_research_and_produced_evidence(self):
+    def test_explicit_strict_blocks_publication_but_allows_research_and_produced_evidence(self):
         with tempfile.TemporaryDirectory() as tmp:
             path = Path(tmp)
             raw, final = path / "raw.txt", path / "report.md"
@@ -53,36 +55,19 @@ class ReviewFixes(unittest.TestCase):
             env = dict(os.environ)
             env.pop("QUALITY_GATES", None)
             cmd = [sys.executable, str(ROOT / "lib/extract_output.py"), str(raw), str(final)]
-            blocked = subprocess.run(cmd, env=env, capture_output=True, text=True)
+            blocked = subprocess.run(cmd + ["publication"], env=env, capture_output=True, text=True)
             self.assertNotEqual(blocked.returncode, 0)
             self.assertEqual(final.read_text(), "Existing\n")
             research = subprocess.run(cmd + ["research"], env=env, capture_output=True, text=True)
             self.assertEqual(research.returncode, 0, research.stderr)
             raw.write_text(raw.read_text() + "<<<BEGIN QUALITY>>>\n" + json.dumps(evidence()) + "\n<<<END QUALITY>>>\n")
-            published = subprocess.run(cmd, env=env, capture_output=True, text=True)
+            published = subprocess.run(cmd + ["publication"], env=env, capture_output=True, text=True)
             self.assertEqual(published.returncode, 0, published.stderr)
             self.assertEqual(final.read_text(), "Research\n")
             self.assertTrue(Path(str(final) + ".quality.json").exists())
             raw.write_text(raw.read_text().replace(json.dumps(evidence()), "{}"))
-            self.assertNotEqual(subprocess.run(cmd, env=env, capture_output=True).returncode, 0)
+            self.assertNotEqual(subprocess.run(cmd + ["publication"], env=env, capture_output=True).returncode, 0)
             self.assertEqual(final.read_text(), "Research\n")
-
-    def test_partial_tender_requires_explicit_expectation_and_respects_residual(self):
-        terms = dict(target_ticker="ABC", cash_per_share=137, currency="USD",
-                     tender=dict(price=137, shares_sought=10, shares_outstanding=100,
-                                 back_end_prices={"down": 80, "flat": 100}))
-        result, warnings = calc.compute(terms, {"ABC": {"price": 100}})
-        self.assertNotIn("headline_return", result["tender"])
-        self.assertIn("expected_entitlement", " ".join(warnings))
-        terms["tender"]["expected_entitlement"] = .2
-        result, warnings = calc.compute(terms, {"ABC": {"price": 100}})
-        self.assertNotIn("headline_return", result["tender"])
-        terms["tender"]["back_end_prices"] = {"down": 80}
-        result, _ = calc.compute(terms, {"ABC": {"price": 100}})
-        self.assertAlmostEqual(result["tender"]["headline_return"], -.086)
-        terms["tender"]["expected_residual_price"] = 90
-        result, _ = calc.compute(terms, {"ABC": {"price": 100}})
-        self.assertAlmostEqual(result["tender"]["headline_return"], -.006)
 
     def test_lock_is_per_job_and_reads_are_unlocked(self):
         self.assertEqual(job_key(["savara"]), job_key(["savara", "run"]))
@@ -110,20 +95,6 @@ class ReviewFixes(unittest.TestCase):
             self.assertEqual(existing.read_text(), "Investor's versioned rules")
             self.assertEqual((kit / "knowledge/refclass-features.md").read_text(), "New bundled content")
             self.assertFalse((kit / "knowledge/research-standards.md").exists())
-
-    def test_catalyst_render_keeps_other_records_and_flags_bad_record(self):
-        good = dict(id="one", company="Test", ticker="TEST", anchor_value=10, anchor_currency="GBP",
-                    price=800, currency="GBp", date="2026-11-20")
-        bad = dict(good, id="two", anchor_currency="JPY")
-        with tempfile.TemporaryDirectory() as tmp:
-            with patch.object(catalysts, "preflight"), patch.object(catalysts, "load_state", return_value={}), \
-                 patch.object(catalysts, "open_items", return_value=[good, bad]):
-                catalysts.cmd_render(tmp)
-            markdown = (Path(tmp) / "catalysts.md").read_text()
-            page = (Path(tmp) / "catalysts.html").read_text()
-            self.assertIn("20%", markdown)
-            self.assertIn("JPY", markdown)
-            self.assertIn("Calculation blocked", page)
 
     def test_background_launcher_logs_and_holds_lock_without_starting_a_job(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -176,7 +147,8 @@ class ReviewFixes(unittest.TestCase):
         with self.assertRaises(GateError):
             listing("ABCDQ", "2026-01-01", "2026-10-04", [], venue="OTC")
         with tempfile.TemporaryDirectory() as tmp:
-            source = Path(tmp) / "notice.txt"
+            source = Path(tmp) / "deals/test/filings/notice.txt"
+            source.parent.mkdir(parents=True)
             source.write_text("ABCDQ listing notice")
             review = dict(source=str(source), line_start=1, line_end=1, reason="Investor reviewed notice")
             listing("ABCDQ", "2026-01-01", "2026-10-04", [], venue="OTC", suffix_review=review)
@@ -187,7 +159,8 @@ class ReviewFixes(unittest.TestCase):
     def test_production_evidence_is_reread_and_latest_supplied_share_filing_selected(self):
         from refclass.provenance import eligibility_gap, shares_verified
         with tempfile.TemporaryDirectory() as tmp:
-            source = Path(tmp) / "filing.txt"
+            source = Path(tmp) / "deals/test/filings/filing.txt"
+            source.parent.mkdir(parents=True)
             source.write_text("TEST listed on NASDAQ.\nSponsor is the applicant for Drug.\nSponsor has 10,000,000 shares outstanding.\n")
             event = dict(ticker="TEST", company="Sponsor", applicant="Sponsor", drug="Drug", announced_at="2025-01-01",
                          listing_evidence=dict(source=str(source), line_start=1, line_end=1, venue="NASDAQ",

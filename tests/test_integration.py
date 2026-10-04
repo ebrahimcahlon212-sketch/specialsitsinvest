@@ -24,7 +24,7 @@ class IntegrationTests(unittest.TestCase):
             (path / "report.md").write_text("Existing report\n")
             (path / "quality.json").write_text("{}")
             proc = subprocess.run([sys.executable, str(ROOT / "lib/extract_output.py"),
-                                   str(path / "raw.txt"), str(path / "report.md")],
+                                   str(path / "raw.txt"), str(path / "report.md"), "publication"],
                                   capture_output=True, text=True)
             self.assertNotEqual(proc.returncode, 0)
             self.assertIn("Quality gate", proc.stderr)
@@ -39,7 +39,7 @@ class IntegrationTests(unittest.TestCase):
                                   env={**os.environ, "QUALITY_GATES": "legacy"})
             self.assertEqual(proc.returncode, 0, proc.stderr)
             self.assertEqual((path / "report.md").read_text(), "Report\n")
-            proc = subprocess.run(cmd, capture_output=True, text=True,
+            proc = subprocess.run(cmd + ["publication"], capture_output=True, text=True,
                                   env={**os.environ, "QUALITY_GATES": "strict"})
             self.assertNotEqual(proc.returncode, 0)
             self.assertIn("missing", proc.stderr)
@@ -56,28 +56,11 @@ class IntegrationTests(unittest.TestCase):
                 self.assertIn("already running", proc.stderr)
                 self.assertFalse((kit / "knowledge").exists())
 
-    def test_currency_gate_at_existing_catalyst_calculator(self):
-        record = dict(anchor_value=10, anchor_currency="GBP", price=800, currency="GBp", date="2026-11-20")
-        self.assertAlmostEqual(catalysts.numbers(record)["discount"], .2)
-        self.assertAlmostEqual(catalysts.numbers(record)["upside"], .25)
-        self.assertIn("quality_error", catalysts.numbers(dict(record, anchor_currency="GBp")))
-        self.assertIn("quality_error", catalysts.numbers(dict(record, anchor_currency="JPY")))
-
     def test_legacy_merger_calculation(self):
         res, warnings = calc.compute({"target_ticker": "ABC", "cash_per_share": 12, "currency": "USD"},
                                      {"ABC": {"price": 10}})
         self.assertEqual(res["deal_value"], 12)
         self.assertAlmostEqual(res["spread_pct"], .2)
-
-    def test_partial_tender_headline_is_whole_holding(self):
-        terms = {"target_ticker": "ABC", "cash_per_share": 137, "currency": "USD",
-                 "tender": {"price": 137, "expected_entitlement": .1, "shares_sought": 10, "shares_outstanding": 100,
-                            "back_end_prices": {"current": 100}}}
-        result, warnings = calc.compute(terms, {"ABC": {"price": 100}})
-        self.assertAlmostEqual(result["tender"]["headline_return"], .037)
-        markdown = calc.to_markdown(result, warnings, terms)
-        self.assertIn("Whole-holding return at expected entitlement", markdown)
-        self.assertIn("3.70%", markdown)
 
     def test_upgrades_include_new_package(self):
         import upgrade

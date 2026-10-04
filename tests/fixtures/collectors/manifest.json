@@ -1,0 +1,119 @@
+[
+  {
+    "url": "https://api.fda.gov/drug/drugsfda.json?limit=2&skip=0&search=application_number%3ANDA%2A+AND+submissions.submission_status_date%3A%5B20250101+TO+20261004%5D",
+    "downloaded_at": "2026-10-04T13:36:08.688215+00:00",
+    "status": 200,
+    "content_type": "application/json; charset=utf-8",
+    "bytes": 60757,
+    "sha256": "a468ac96ed7c8a9d9ab3e0334178e811f6dc9e7015ed800d4f13711b953bcf50",
+    "file": "1084477fbf1b1391-a468ac96ed7c.response"
+  },
+  {
+    "url": "https://api.fda.gov/transparency/crl.json?limit=2&skip=0",
+    "downloaded_at": "2026-10-04T13:36:09.558497+00:00",
+    "status": 200,
+    "content_type": "application/json; charset=utf-8",
+    "bytes": 35190,
+    "sha256": "bc2da348874a928c375ebf757055b4579bd21ca48b1d156622af033953860094",
+    "file": "f9e7bff4d2f6b7f1-bc2da348874a.response"
+  },
+  {
+    "url": "https://data.sec.gov/submissions/CIK0001160308.json",
+    "downloaded_at": "2026-10-04T13:36:09.885801+00:00",
+    "status": 200,
+    "content_type": "application/json",
+    "bytes": 164675,
+    "sha256": "869ba9fcac4ad5cd85c9f039e9b31cc8a89e0317d6a56bf9ec309dd3ae8628d4",
+    "file": "2d26b5c3fd1649a4-869ba9fcac4a.response"
+  },
+  {
+    "url": "https://data.sec.gov/submissions/CIK0001160308.json",
+    "downloaded_at": "2026-10-04T13:37:09.493777+00:00",
+    "status": 200,
+    "content_type": "application/json",
+    "bytes": 164675,
+    "sha256": "869ba9fcac4ad5cd85c9f039e9b31cc8a89e0317d6a56bf9ec309dd3ae8628d4",
+    "file": "2d26b5c3fd1649a4-869ba9fcac4a.response"
+  },
+  {
+    "url": "https://www.sec.gov/Archives/edgar/data/1160308/000119312526105099/d107834d8k.htm",
+    "downloaded_at": "2026-10-04T13:37:09.711918+00:00",
+    "status": 200,
+    "content_type": "text/html",
+    "bytes": 26802,
+    "sha256": "ac17bc5e1072256e3b3671b439b81697b849f1b72b3819465b70449508bd4ad3",
+    "file": "4a928dfb559e80fd-ac17bc5e1072.response"
+  },
+  {
+    "url": "https://www.sec.gov/Archives/edgar/data/1160308/000119312526105099/0001193125-26-105099-index.htm",
+    "downloaded_at": "2026-10-04T13:37:09.935057+00:00",
+    "status": 200,
+    "content_type": "text/html; charset=UTF-8",
+    "bytes": 9996,
+    "sha256": "1704ea7818faf611e23514ed523c9dc1e4341873d0d3341331450413ae2f9cd8",
+    "file": "5ef4f2f8386ed5ca-1704ea7818fa.response"
+  },
+  {
+    "url": "https://data.sec.gov/submissions/CIK0001160308.json",
+    "downloaded_at": "2026-10-04T13:37:26.590436+00:00",
+    "status": 200,
+    "content_type": "application/json",
+    "bytes": 164675,
+    "sha256": "869ba9fcac4ad5cd85c9f039e9b31cc8a89e0317d6a56bf9ec309dd3ae8628d4",
+    "file": "2d26b5c3fd1649a4-869ba9fcac4a.response"
+  },
+  {
+    "url": "https://www.sec.gov/Archives/edgar/data/1160308/000119312526023378/d39349d8k.htm",
+    "downloaded_at": "2026-10-04T13:37:26.913699+00:00",
+    "status": 200,
+    "content_type": "text/html",
+    "bytes": 28241,
+    "sha256": "760b2ff69414c7982ff369082e3340c4fe6cadb4fbed097fc10f6bb62cb197c4",
+    "file": "868307f0ac633387-760b2ff69414.response"
+  },
+  {
+    "url": "https://www.sec.gov/Archives/edgar/data/1160308/000119312526023378/0001193125-26-023378-index.htm",
+    "downloaded_at": "2026-10-04T13:37:27.177496+00:00",
+    "status": 200,
+    "content_type": "text/html; charset=UTF-8",
+    "bytes": 9755,
+    "sha256": "47cc0465d2c8f04ca45cd75e07fe2e921387d942d02db42c520bcc1ca5549316",
+    "file": "0efe0915a903f1ee-47cc0465d2c8.response"
+  },
+  {
+    "url": "https://data.sec.gov/submissions/CIK0001160308.json",
+    "downloaded_at": "2026-10-04T13:37:47.085543+00:00",
+    "status": 200,
+    "content_type": "application/json",
+    "bytes": 164675,
+    "sha256": "869ba9fcac4ad5cd85c9f039e9b31cc8a89e0317d6a56bf9ec309dd3ae8628d4",
+    "file": "2d26b5c3fd1649a4-869ba9fcac4a.response"
+  },
+  {
+    "url": "https://www.sec.gov/Archives/edgar/data/1160308/000119312525258629/d62228d8k.htm",
+    "downloaded_at": "2026-10-04T13:37:47.307624+00:00",
+    "status": 200,
+    "content_type": "text/html",
+    "bytes": 31363,
+    "sha256": "aff6859e6a7edd58b24e9a12e76a3beb770399f958ad160e3eb2fec0ba0f4707",
+    "file": "58f4c882e579e6cf-aff6859e6a7e.response"
+  },
+  {
+    "url": "https://www.sec.gov/Archives/edgar/data/1160308/000119312525258629/0001193125-25-258629-index.htm",
+    "downloaded_at": "2026-10-04T13:37:47.520172+00:00",
+    "status": 200,
+    "content_type": "text/html; charset=UTF-8",
+    "bytes": 11939,
+    "sha256": "9d70fd4eb94d6ae344031ab61825bfdf5fea8bf0a8157982869716cc1d46b0ae",
+    "file": "56d641f9e406b3e8-9d70fd4eb94d.response"
+  },
+  {
+    "url": "https://www.sec.gov/Archives/edgar/data/1160308/000119312525258629/d62228dex991.htm",
+    "downloaded_at": "2026-10-04T13:37:47.776432+00:00",
+    "status": 200,
+    "content_type": "text/html",
+    "bytes": 10276,
+    "sha256": "de99441b4bfa85813ee0016dd72171b7da4f1f544235e34c1b519417fe2096c8",
+    "file": "b51360f12504b7c3-de99441b4bfa.response"
+  }
+]

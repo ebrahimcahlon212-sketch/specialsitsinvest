@@ -73,7 +73,8 @@ class QualityTests(unittest.TestCase):
 
     def test_date_type(self):
         with tempfile.TemporaryDirectory() as tmp:
-            source = Path(tmp) / "announcement.txt"
+            source = Path(tmp) / "deals/test/filings/announcement.txt"
+            source.parent.mkdir(parents=True)
             source.write_text("FDA approved the drug on 2026-10-04.\nThe PDUFA goal date is 2026-11-20.\nSubmitted on 2026-10-01.")
             evidence = dict(source=str(source), line_start=1, line_end=3)
             decision_date("fda_action", "2026-10-04", evidence)
@@ -110,6 +111,7 @@ class QualityTests(unittest.TestCase):
         self.assertAlmostEqual(whole_holding(100, 137, .1, 100), .037)
         evidence = {key: {"not_applicable": "test"} for key in
                     ("units", "staleness", "listing", "attribution", "date_type", "arithmetic")}
+        evidence["arithmetic"] = [dict(kind="return", inputs=dict(pre=100, post=137), reported=.37)]
         evidence["partial_tender"] = dict(price=100, tender_price=137, entitlement=.1,
                                           residual_price=100, headline_return=.37)
         with self.assertRaises(GateError):
