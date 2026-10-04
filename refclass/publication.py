@@ -30,10 +30,13 @@ def price_evidence(row, cache=None):
     require(bool(marker) and line.isdigit(), 'Price gate needs a saved IBKR bar and #L locator.')
     text = primary_line(source, int(line), cache)
     bar = json.loads(text)
-    require(bar.get('provider') == 'IBKR', 'Price gate needs an IBKR response.')
+    require(bar.get('provider') in ('IBKR', 'Massive'), 'Price gate needs a primary price response.')
     for key in ('ticker', 'date', 'close', 'adjusted_close'):
         require(bar.get(key) == row[key], 'Price gate source mismatch. ' + key)
     require(bar.get('adjustment') == 'split_only', 'Price gate needs explicit split-only adjustment.')
+    if bar.get('provider') == 'Massive':
+        from .collectors.massive import verify
+        verify(bar)
     if 'broker_response' in bar:
         payload = bar['broker_response']
         native = payload['bars'][bar['broker_index']]
@@ -62,7 +65,8 @@ def check(db, result):
         sessions = [dict(r) for r in conn.execute('SELECT * FROM sessions')]
     cache = {}
     for price in prices:
-        price_evidence(price, cache)
+        require(price_evidence(price, cache).get('provider') == 'Massive',
+                'Census prices require Massive daily aggregates.')
     for row in result.get('exclusions', []):
         event = row['event']
         current = ('Excluded by independent reviews' if event.get('event_review', {}).get('decision') == 'exclude' else None) or exclusion(event, result['as_of']) or eligibility_gap(event)
@@ -70,6 +74,13 @@ def check(db, result):
         # Exclusions need primary evidence and independent review too.
         from .review import verify_event_review
         verify_event_review(event)
+    from .crosscheck import verify_check, compare_bars
+    for bar in result.get('ibkr_checks', []):
+        verify_check(bar, cache)
+    all_events = [r['event'] for r in result['events']] + [r['event'] for r in result.get('exclusions', [])]
+    require(result.get('ibkr_comparisons', []) == compare_bars(
+        all_events, prices, sessions, result.get('ibkr_checks', []), result['as_of']),
+        'Independent IBKR comparisons differ from recomputation.')
     rows = []
     for row in result['events']:
         event = row['event']

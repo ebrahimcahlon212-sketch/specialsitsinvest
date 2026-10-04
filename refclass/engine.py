@@ -18,7 +18,7 @@ from .provenance import eligibility_gap, shares_verified
 from .math import abnormal_return, positive, raw_return
 
 EASTERN = ZoneInfo("America/New_York")
-SOURCES = ("drugs_at_fda", "openfda_crl", "edgar", "ibkr")
+SOURCES = ("drugs_at_fda", "openfda_crl", "edgar", "massive")
 TYPES = ("approval", "crl", "refusal_to_file", "extension", "resubmission_accepted")
 
 
@@ -27,7 +27,7 @@ def conventions(knowledge):
     for name in ("rules", "features"):
         content = (Path(knowledge) / f"refclass-{name}.md").read_bytes()
         first = content.decode().splitlines()[0]
-        version = 2 if name == "rules" else 1
+        version = 3 if name == "rules" else 1
         if not first.endswith(f"version {version}"):
             raise ValueError(f"Unsupported {name} version. Update the engine and its tests first.")
         result[f"{name}_version"] = version
@@ -215,6 +215,10 @@ def build(db, snapshot, knowledge, update=False):
                 new = partitions if isinstance(partitions, list) else [partitions]
                 coverage[source] = old + [p for p in new if p not in old]
             snapshot["coverage"] = coverage
+            old_checks = json.loads(previous.get('ibkr_checks', '[]'))
+            checks = {(r['ticker'], r['date']): r for r in old_checks}
+            checks.update({(r['ticker'], r['date']): r for r in snapshot.get('ibkr_checks', [])})
+            snapshot['ibkr_checks'] = list(checks.values())
             snapshot["gaps"] = sorted(set(json.loads(previous.get("gaps", "[]")) + snapshot.get("gaps", [])))
         as_of = snapshot["as_of"]
         date.fromisoformat(as_of)
@@ -227,7 +231,8 @@ def build(db, snapshot, knowledge, update=False):
             from .publication import price_evidence
             cache = {}
             for price in prices:
-                price_evidence(price, cache)
+                if price_evidence(price, cache).get('provider') != 'Massive':
+                    raise ValueError('Census prices require Massive daily aggregates; IBKR is an independent check.')
         seen = set()
         prepared = []
         for event in events:
@@ -267,7 +272,14 @@ def build(db, snapshot, knowledge, update=False):
             linked = {e.get("candidate_id") for e in events}
             snapshot["pending_candidates"] = sorted(c["candidate_id"] for c in snapshot["candidates"]
                                                      if c["candidate_id"] not in linked)
-        metadata = dict(rules, candidate_count=len(snapshot.get("candidates", [])),
+        from .crosscheck import compare_bars
+        checks = snapshot.get('ibkr_checks', [])
+        if not snapshot.get('fixture'):
+            from .crosscheck import verify_check
+            for bar in checks:
+                verify_check(bar, cache)
+        comparisons = compare_bars(events, prices, sessions, checks, as_of)
+        metadata = dict(rules, ibkr_checks=checks, ibkr_comparisons=comparisons, candidate_count=len(snapshot.get("candidates", [])),
                         pending_candidates=snapshot.get("pending_candidates", []), as_of=as_of, fixture=bool(snapshot.get("fixture")),
                         coverage=coverage, gaps=sorted(set(snapshot.get("gaps", []) +
                                                           [f"{s}. Source not supplied" for s in SOURCES if not coverage.get(s)])),
@@ -390,6 +402,8 @@ def render(result):
               f'Unknown first-product status {result["unknown_first_product"]}. Source gaps {len(result["gaps"])}.']
     lines.extend("Source gap. " + gap for gap in result["gaps"])
     lines.extend(f'Excluded {row["event_id"]}. {row["reason"]}' for row in result.get("exclusions", []))
+    for comparison in result.get('ibkr_comparisons', []):
+        lines.append('IBKR independent check. ' + json.dumps(comparison, sort_keys=True))
     lines.extend(f"Source coverage. {key}. {value}" for key, value in result["coverage"].items())
     lines.append("No approval probabilities or likelihood ratios in phase 1. Live use requires the phase 2 backtest.")
     def fmt(summary):

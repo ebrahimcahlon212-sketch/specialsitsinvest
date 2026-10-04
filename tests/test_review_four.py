@@ -27,19 +27,22 @@ class ReviewFourTests(unittest.TestCase):
         self.root = Path(self.tmp.name) / 'deals/test'
         (self.root / 'filings').mkdir(parents=True)
         self.source = self.root / 'filings/source.txt'
+        registry = patch('refclass.review.REVIEW_ROOT', self.root / 'registry')
+        registry.start()
+        self.addCleanup(registry.stop)
         self.ev = dict(source=str(self.source), line_start=1, line_end=1)
 
     def test_profile_exact_numbers_scientific_currency_date_and_candidate(self):
         profile = dict(self.ev, as_of='2026-10-04', first_product=True, market_value=300000000,
                        market_value_evidence=dict(self.ev, currency='USD', as_of='2026-10-04'))
-        self.source.write_text('We have no approved products. Market value USD 1300000000 on 2026-10-04.')
+        self.source.write_text('We have no approved products. Market capitalization at the pre-news close USD 1300000000 on 2026-10-04.')
         with self.assertRaises(GateError): verify_profile(profile, self.root)
         profile['market_value'] = 1.2e9
-        self.source.write_text('We have no approved products. Market value USD 1.2e9 on 2026-10-04.')
+        self.source.write_text('We have no approved products. Market capitalization at the pre-news close USD 1.2e9 on 2026-10-04.')
         verify_profile(profile, self.root)
-        for text in ('Our first product candidate. Market value USD 1.2e9 on 2026-10-04.',
-                     'We have no approved products. Market value GBP 1.2e9 on 2026-10-04.',
-                     'We have no approved products. Market value USD 1.2e9 on 2026-09-04.'):
+        for text in ('Our first product candidate. Market capitalization at the pre-news close USD 1.2e9 on 2026-10-04.',
+                     'We have no approved products. Market capitalization at the pre-news close GBP 1.2e9 on 2026-10-04.',
+                     'We have no approved products. Market capitalization at the pre-news close USD 1.2e9 on 2026-09-04.'):
             self.source.write_text(text)
             with self.assertRaises(GateError): verify_profile(profile, self.root)
 
@@ -150,7 +153,7 @@ class ReviewFourTests(unittest.TestCase):
             dict(type='text', text=json.dumps(rows[0]))]))))
         with self.assertRaisesRegex(ValueError, 'No historical'): transcript_bars(self.source, 'ibkr')
         self.source.write_text(sample.read_text().replace('split_only', 'dividend_adjusted'))
-        self.assertIn('close convention', transcript_bars(self.source, 'ibkr')[0]['error'])
+        self.assertEqual(transcript_bars(self.source, 'ibkr')[0]['purpose'], 'independent_check_only')
 
     def test_fetch_request_bounds_and_xbi(self):
         self.assertEqual(request(['VRNA'], '2024-06-01', '2024-07-01')['tickers'], ['VRNA', 'XBI'])

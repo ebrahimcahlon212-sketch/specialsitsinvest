@@ -28,6 +28,9 @@ class ReviewFiveTests(unittest.TestCase):
         self.temp = tempfile.TemporaryDirectory()
         self.addCleanup(self.temp.cleanup)
         self.root = Path(self.temp.name)
+        registry = patch('refclass.review.REVIEW_ROOT', self.root / 'registry')
+        registry.start()
+        self.addCleanup(registry.stop)
         self.deal = self.root / 'deals/test'
         (self.deal / 'filings').mkdir(parents=True)
         self.source = self.deal / 'filings/evidence.txt'
@@ -121,7 +124,7 @@ class ReviewFiveTests(unittest.TestCase):
     def test_profile_real_wording_scale_and_date(self):
         profile = dict(self.ev, first_product=True, as_of='2026-06-30', market_value=1200000000,
                        market_value_evidence=dict(self.ev, currency='USD', as_of='2026-06-30'))
-        self.source.write_text('We have no products approved for commercial sale. Market value $1.2 billion as of June 30, 2026.')
+        self.source.write_text('We have no products approved for commercial sale. Market capitalization at the pre-news close $1.2 billion as of June 30, 2026.')
         verify_profile(profile, self.deal)
         for value in (120000000, 12000000000):
             with self.assertRaises(GateError): verify_profile(dict(profile, market_value=value), self.deal)

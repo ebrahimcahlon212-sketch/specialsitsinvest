@@ -31,10 +31,10 @@ def evaluate(db, knowledge, targets):
     require({r['ticker'] for r in expected} == {'VRNA', 'KALV', 'CRNX', 'LQDA'} and len(expected) == 4,
             'Acceptance needs exactly Verona, KalVista, Crinetics and Liquidia targets.')
     require(not result.get('pending_candidates'), 'Census still has unreviewed candidates.')
-    for name in ('drugs_at_fda', 'openfda_crl', 'edgar', 'ibkr'):
+    for name in ('drugs_at_fda', 'openfda_crl', 'edgar', 'massive'):
         partitions = result['coverage'].get(name, [])
         require(isinstance(partitions, list) and partitions and
-                (name == 'ibkr' or all(p['complete'] for p in partitions)),
+                (name == 'massive' or all(p['complete'] for p in partitions)),
                 'Incomplete collection partitions. ' + name)
     require(result.get('candidate_count', 0) > 0, 'Census has no collected candidates.')
     from datetime import date, timedelta
@@ -53,5 +53,10 @@ def evaluate(db, knowledge, targets):
         require(len(rows) == 1, 'Comparable missing or ambiguous. ' + target['ticker'])
         reaction = rows[0]['reaction']
         require(reaction['status'] == 'priced', 'Comparable is unpriced. ' + target['ticker'])
+        for origin in reaction['price_sources']:
+            from .publication import primary_line
+            source, _, line = origin['source'].rpartition('#L')
+            require(json.loads(primary_line(source, int(line))).get('provider') == 'Massive',
+                    'Acceptance comparables require Massive bars.')
         compare(reaction, target)
-    return render(result) + f'Four comparables matched as-traded closes to the cent and both split-adjusted returns to one basis point. Targets [{Path(targets).resolve()}].\n'
+    return render(result) + f'Four comparables matched as-traded closes to the cent and both split-adjusted returns to half a basis point. Targets [{Path(targets).resolve()}].\n'

@@ -10,10 +10,10 @@ import shlex
 import sys
 
 BUILTINS = ('Read', 'Glob', 'Grep')
-CONTRACTS = ('search_contract', 'search_contracts', 'get_contract_details')
+CONTRACTS = ('search_contracts',)
 MODES = {
     'ibkr-bars': CONTRACTS + ('get_price_history',),
-    'ibkr': CONTRACTS + ('get_stock_price', 'get_market_data', 'get_positions', 'get_account_summary'),
+    'ibkr': CONTRACTS + ('get_price_snapshot', 'get_account_positions', 'get_account_balances', 'get_account_summary'),
 }
 
 

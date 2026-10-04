@@ -41,7 +41,7 @@ def transcript_bars(path, server):
     Plain OHLCV is never silently relabelled split-adjusted. The transport is
     retained even when the provider cannot supply the required price convention.
     """
-    calls, rows = {}, []
+    calls, rows, contracts = {}, [], {}
     for number, line in enumerate(Path(path).read_text().splitlines(), 1):
         message = json.loads(line)
         for block in message.get('message', {}).get('content', []):
@@ -49,7 +49,7 @@ def transcript_bars(path, server):
                 continue
             if block.get('type') == 'tool_use':
                 name = block.get('name', '')
-                if name in {f'mcp__{server}__get_price_history', f'mcp__{server}__historical_bars'}:
+                if name in {f'mcp__{server}__get_price_history', f'mcp__{server}__search_contracts', f'mcp__{server}__historical_bars'}:
                     calls[block['id']] = dict(name=name, input=block.get('input', {}))
             if block.get('type') != 'tool_result' or block.get('tool_use_id') not in calls:
                 continue
@@ -61,6 +61,20 @@ def transcript_bars(path, server):
                 payload = json.loads(content) if isinstance(content, str) else content
             except ValueError:
                 payload = content
+            if call['name'] == f'mcp__{server}__search_contracts':
+                def visit(value):
+                    if isinstance(value, dict):
+                        conid = value.get('contract_id', value.get('conid', value.get('con_id')))
+                        symbol = value.get('ticker', value.get('symbol'))
+                        if conid is not None and symbol:
+                            contracts[str(conid)] = symbol
+                        for child in value.values():
+                            visit(child)
+                    elif isinstance(value, list):
+                        for child in value:
+                            visit(child)
+                visit(payload)
+                continue
             origin = dict(provider='IBKR', broker_response=payload, broker_tool=call['name'],
                           broker_input=call['input'], transcript=str(Path(path).resolve()),
                           transcript_line=number, tool_use_id=block['tool_use_id'])
@@ -73,10 +87,14 @@ def transcript_bars(path, server):
                     continue
                 bar = {key: native.get(key, payload.get(key)) for key in
                        ('ticker', 'date', 'close', 'adjusted_close', 'adjustment')}
-                if any(v is None for v in bar.values()) or bar['adjustment'] != 'split_only':
+                bar['ticker'] = bar.get('ticker') or payload.get('symbol') or contracts.get(str(call['input'].get('contract_id')))
+                if not all(bar.get(k) is not None for k in ('ticker', 'date', 'close')):
                     rows.append(dict(origin, broker_index=index,
-                        error='Plain OHLCV or missing close convention. Split-only adjusted and as-traded closes are not established.'))
-                    break  # One gap per payload; the complete original payload is retained.
+                        error='Plain OHLCV missing ticker, date or close; close convention unavailable.'))
+                    break
+                if bar.get('adjustment') != 'split_only' or bar.get('adjusted_close') is None:
+                    bar = {k: bar[k] for k in ('ticker', 'date', 'close')}
+                    bar['purpose'] = 'independent_check_only'
                 rows.append(dict(bar, **origin, broker_index=index))
     if not rows:
         raise ValueError('No historical IBKR tool results. Assistant-generated bars are not primary evidence.')
@@ -108,7 +126,7 @@ def main():
                 'or attempt historical pagination. Requested tickers and dates: ' + json.dumps(query) + '. '
                 'Include XBI. Tool responses are captured directly; do not transform OHLCV into adjusted_close, '
                 'invent split factors or claim that plain closes have a verified adjustment convention. '
-                'Unsupported history, symbols and adjustments will remain explicit unpriced gaps. '
+                'Plain OHLCV closes are retained only for the independent comparison with Massive. Missing history and symbols remain explicit gaps. '
                 'Do not use current quotes, reports or the web as historical prices.\n' +
                 '\n'.join(capability_gaps(query)) + '\n')
             print(prompt); print(output)

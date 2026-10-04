@@ -29,7 +29,7 @@ def main(argv=None):
     quality = sub.add_parser("gates", help="Validate a structured quality evidence JSON file")
     quality.add_argument("evidence", type=Path)
     collect = sub.add_parser("collect", help="Collect bounded FDA or EDGAR source candidates for review")
-    collect.add_argument("source", choices=("drugs_at_fda", "openfda_crl", "edgar", "ibkr"))
+    collect.add_argument("source", choices=("drugs_at_fda", "openfda_crl", "edgar", "ibkr", "massive"))
     collect.add_argument("--cache", type=Path, help="Offline cache override; live downloads always use data/refclass/raw/source/date")
     collect.add_argument("--output", type=Path, required=True)
     collect.add_argument("--offline", action="store_true", help="Replay only saved cache responses")
@@ -44,6 +44,7 @@ def main(argv=None):
     collect.add_argument("--tickers", nargs="+", default=[])
     collect.add_argument("--max-filings", type=int, default=1)
     collect.add_argument("--max-history", type=int, default=1)
+    collect.add_argument("--history-years", type=int, default=2, help="Massive plan history, default free-tier two years")
     collect.add_argument("--max-exhibits", type=int, default=2)
     profile = sub.add_parser('profile', help='Validate and save a deal profile from primary deal documents')
     profile.add_argument('name')
@@ -83,15 +84,9 @@ def main(argv=None):
         if args.command == 'review':
             from .review import reconcile
             if not any((args.prepared, args.reviews, args.output, args.resolve)):
-                import csv
-                count = 0
-                for path in sorted((root / 'data/refclass').rglob('disagreements.csv')):
-                    with path.open(newline='') as f:
-                        for row in csv.DictReader(f):
-                            print(f"{row['candidate_id']} [{path}]")
-                            count += 1
-                if not count:
-                    print('No saved disagreements under data/refclass.')
+                from .review import pending_reviews
+                rows = list(pending_reviews(root / 'data/refclass'))
+                print('\n'.join(rows) if rows else 'No current saved disagreements under data/refclass.')
                 return 0
             if not all((args.prepared, args.reviews, args.output)):
                 raise ValueError('Reconciliation needs --prepared, --reviews and --output.')
@@ -108,7 +103,14 @@ def main(argv=None):
             with job_lock(args.cache / '.collection.lock'):
                 contact = saved_contact(args.settings) if args.source == "edgar" and not args.offline else None
                 client = Client(args.cache, contact=contact, offline=args.offline)
-                if args.source == "ibkr":
+                if args.source == "massive":
+                    from .collectors import massive
+                    if not args.tickers:
+                        raise ValueError('Massive collection needs --tickers, including historical delisted symbols.')
+                    client = massive.Client(args.cache, settings=args.settings, offline=args.offline)
+                    result = massive.collect(client, tickers=args.tickers, since=args.since, until=args.until,
+                                             history_years=args.history_years)
+                elif args.source == "ibkr":
                     from .collectors import ibkr
                     if args.bars is None or not args.tickers:
                         raise ValueError("IBKR ingestion needs --bars and --tickers. Current quotes are not historical bars.")
@@ -134,7 +136,7 @@ def main(argv=None):
                     result = build(args.db, {"as_of": date.today().isoformat(), "events": [], "prices": [], "sessions": [],
                                            "gaps": [f"Snapshot not found. {args.input}"]}, root / "knowledge")
                     print("Saved an empty database with a missing-source gap.", file=sys.stderr)
-                raise ValueError(f"Source snapshot not found. {args.input}. Supply FDA, CRL, EDGAR and IBKR data; fixtures are not production data.")
+                raise ValueError(f"Source snapshot not found. {args.input}. Supply FDA, CRL, EDGAR and Massive data; fixtures are not production data.")
             from .pipeline import assemble
             snapshot = (json.loads(args.input.read_text()) if args.input.exists()
                         else {"as_of": date.today().isoformat(), "events": [], "prices": [], "sessions": []})

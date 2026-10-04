@@ -1,0 +1,30 @@
+[
+  {
+    "url": "https://api.massive.com/v2/aggs/ticker/KALV/range/1/day/2025-07-01/2025-07-10?adjusted=false&sort=asc&limit=50000",
+    "file": "51b36eea16bdb2ac-97aae9848e4e.json",
+    "sha256": "97aae9848e4e4b96eee2726cba74fafab00b57986a74dade4ceb7aa036de0296",
+    "status": 200,
+    "downloaded_at": "2026-10-04T19:57:33.156382+00:00"
+  },
+  {
+    "url": "https://api.massive.com/v2/aggs/ticker/KALV/range/1/day/2025-07-01/2025-07-10?adjusted=true&sort=asc&limit=50000",
+    "file": "395e6685628c9afe-49c595d3cd1e.json",
+    "sha256": "49c595d3cd1ea177e081b9664719f0f922c3c41e00b467d6cd82e1edde0d861b",
+    "status": 200,
+    "downloaded_at": "2026-10-04T19:57:45.247235+00:00"
+  },
+  {
+    "url": "https://api.massive.com/v2/aggs/ticker/XBI/range/1/day/2025-07-01/2025-07-10?adjusted=false&sort=asc&limit=50000",
+    "file": "a4c7d879eb6e9ef8-6912503f68de.json",
+    "sha256": "6912503f68de1d7cbecd5f0c957e5df40a0a75d1c01addc874ea013d2cb8cd2b",
+    "status": 200,
+    "downloaded_at": "2026-10-04T19:57:57.350898+00:00"
+  },
+  {
+    "url": "https://api.massive.com/v2/aggs/ticker/XBI/range/1/day/2025-07-01/2025-07-10?adjusted=true&sort=asc&limit=50000",
+    "file": "2963b42f47a9bc22-b510b01277fb.json",
+    "sha256": "b510b01277fb2e5b378bb82efd72e89f2a9871c154a060ba45da0b1d6016c23d",
+    "status": 200,
+    "downloaded_at": "2026-10-04T19:58:09.439888+00:00"
+  }
+]

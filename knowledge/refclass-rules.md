@@ -1,4 +1,4 @@
-# Reference class rules, version 2
+# Reference class rules, version 3
 
 Fixed on 4 October 2026, before any results were seen. Any subsequent rule change increments the version, and every output records the version it used.
 
@@ -18,6 +18,8 @@ Approvals and rejections are always reported separately, with the count at every
 - FDA action dates come from structured approval action or letter fields. Announcement times use the company 8-K EDGAR acceptance timestamp, converted to US Eastern. Press-release prose only flags contradictions for independent review, never establishes a date. This timing rule implements amendment 8.
 - The pre-news close is the last regular-session close before the announcement.
 - A pre-market announcement makes that day's session day one. An announcement during market hours or after the close makes the next session day one. Day two is the session after day one.
+- Census prices use Massive daily aggregates, requested with adjusted=false for as-traded closes and adjusted=true for split-adjusted closes. Delisted symbols remain eligible. Free-tier history gaps remain explicit until the full run after upgrade.
+- IBKR closes independently check the event windows within the last five years. Differences above $0.01 require review; missing broker bars remain explicit.
 - Returns use split-adjusted closes, and the abnormal return is the stock's return from the pre-news close minus XBI's return over the same window.
 - Market value is the pre-news close multiplied by common shares outstanding from the latest filing before the event.
 

@@ -236,6 +236,8 @@ class ReviewThreeTests(unittest.TestCase):
                     prices.append({**{k: bar[k] for k in ('ticker', 'date', 'close', 'adjusted_close')},
                                    'source': f'{bars}#L{len(records)}'})
             bars.write_text('\n'.join(records))
+            from tests.support import massive_prices
+            prices = massive_prices(root / 'massive', prices)
             from refclass.engine import reconcile_tags
             from refclass.review import seal
             event = reconcile_tags(event)

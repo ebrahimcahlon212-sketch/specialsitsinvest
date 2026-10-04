@@ -17,7 +17,7 @@ def assemble(snapshot, paths):
     for path in paths:
         data = json.loads(Path(path).read_text())
         source = data['source']
-        if source not in ('drugs_at_fda', 'openfda_crl', 'edgar', 'ibkr'):
+        if source not in ('drugs_at_fda', 'openfda_crl', 'edgar', 'ibkr', 'massive'):
             raise ValueError('Unknown collection source')
         entry = dict(path=str(path), complete=data.get('complete', False), scope=data.get('scope', {}))
         previous = coverage.get(source, [])
@@ -36,7 +36,18 @@ def assemble(snapshot, paths):
         for row in data.get('filings', []):
             identity = 'edgar:' + row['accessionNumber']
             candidates[identity] = dict(row, candidate_id=identity)
-        snapshot.setdefault('prices', []).extend(data.get('prices', []))
+        snapshot.setdefault('prices', []).extend(data.get('prices', []) if source != 'ibkr' else [])
+        snapshot.setdefault('ibkr_checks', []).extend(data.get('ibkr_checks', []))
+    # XBI is intentionally included in each ticker collection. Repeated bars
+    # may share values, but conflicting vintages must not silently overwrite.
+    for name, fields in (('prices', ('close', 'adjusted_close')), ('ibkr_checks', ('close',))):
+        unique = {}
+        for row in snapshot.get(name, []):
+            key = (row['ticker'], row['date'])
+            if key in unique and any(unique[key][f] != row[f] for f in fields):
+                raise ValueError('Conflicting ' + name + ' for ' + str(key))
+            unique[key] = row
+        snapshot[name] = list(unique.values())
     linked = set()
     for event in events.values():
         identity = event.get('candidate_id')

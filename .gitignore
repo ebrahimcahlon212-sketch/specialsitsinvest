@@ -28,3 +28,6 @@ data/refclass*.sqlite*
 !/knowledge/research-standards.md
 
 .manifest.lock
+
+data/refclass/active-reviews.json
+data/refclass/.reviews.lock

@@ -17,3 +17,10 @@ These override docs/system-spec.md where they differ.
 10. A new command, ./run.sh refclass fetch-bars, uses the kit's existing IBKR connection to save daily bars for given tickers and dates into data/refclass/raw/ibkr/. Ebrahim runs it live, and the build agent tests it only with saved samples.
 11. Code assembles the event list from the collected candidates, and two models review it into a CSV with disagreements sent to Ebrahim, instead of sentence-level rules.
 12. Phase 1 is accepted when the live build reproduces the four comparables from IBKR bars to the cent, reports the census counts, prints the nested classes for a Savara profile built from the Savara deal documents, and traces every published number to a file in data/refclass/raw/ or a deal folder.
+
+## Version 3, 4 October 2026
+
+13. Historical prices for the census come from Massive's daily aggregates, which keep delisted tickers. Each event stores the as-traded close, requested with adjusted=false, and the split-adjusted close, requested with adjusted=true. Returns use split-adjusted closes and the comparables check uses as-traded closes. Amendment 12's acceptance uses Massive bars.
+14. The build is developed and tested on Massive's free tier, which holds two years of history. Ebrahim runs the full census after upgrading for one month, and events beyond the plan's history are reported as a gap rather than dropped silently.
+15. For events within the last five years, IBKR closes from fetch-bars provide an independent check, and any difference above one cent is flagged for review.
+16. The API key is read from settings.env as MASSIVE_API_KEY. It never appears in logs or committed files, and requests stay within the plan's rate limit, which is five calls a minute on the free tier.

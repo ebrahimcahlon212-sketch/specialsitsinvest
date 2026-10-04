@@ -5,6 +5,8 @@ import json
 from pathlib import Path
 from .quality import require, source_excerpt, primary_path
 
+REVIEW_ROOT = Path(__file__).resolve().parents[1] / 'data/refclass'
+
 FIELDS = ['candidate_id', 'decision', 'event_json', 'reason']
 IMMUTABLE = ('event_id', 'candidate_id', 'event_type', 'application_number', 'action_date',
              'action_evidence', 'announced_at', 'announcement_evidence', 'source', 'locator')
@@ -89,42 +91,50 @@ def reconcile(prepared, reviews, output, resolutions=None):
     agreed, disputes = [], []
     for key, original in drafts.items():
         a, b = (rows[key] for rows in results)
-        ea, eb = json.loads(a['event_json']), json.loads(b['event_json'])
-        for event in (ea, eb):
-            for field in IMMUTABLE:
-                if original.get(field) is not None:
-                    require(event.get(field) == original[field], 'Review changed a structured candidate field. ' + field)
-        decision = a['decision']
-        resolution = resolved.get(key)
-        if resolution:
-            ea = json.loads(resolution['event_json'])
-            decision = resolution['decision']
-            require(decision in ('include', 'exclude'), 'Human decision must include or exclude.')
-            for field in IMMUTABLE:
-                if original.get(field) is not None:
-                    require(ea.get(field) == original[field], 'Resolution changed a structured field. ' + field)
-            require(ea.get('press_release_conflict') is False,
-                    'Resolve the structured timing conflict before publishing.')
-            ea['event_resolution'] = dict(resolved_by='Ebrahim', reason=resolution['reason'],
-                source_file=str(Path(resolutions).resolve()),
-                feature_values={t['feature']: t['value'] for t in ea.get('tags', [])})
-            ea['tags'] = [dict(t, tagger='Ebrahim') for t in ea.get('tags', [])]
-        elif (decision != b['decision'] or substantive(ea) != substantive(eb)
-                or decision not in ('include', 'exclude')
-                or ea.get('press_release_conflict') is not False):
-            disputes.append(dict(candidate_id=key, review_one=json.dumps(a), review_two=json.dumps(b)))
-            continue
-        else:
-            ea['tags'] = [dict(t, tagger=model) for model, event in (('claude', ea), ('codex', eb))
-                          for t in event.get('tags', [])]
-        # Keep both independent readings, including differing source ranges.
-        ea['review_observations'] = [dict(reviewer=model, decision=r['decision'],
-                                         reason=r['reason'], event=json.loads(r['event_json']))
-                                     for model, r in (('claude', a), ('codex', b))]
-        from .engine import reconcile_tags
-        ea = reconcile_tags(ea)
-        seal(ea, decision, [str(Path(p).resolve()) for p in reviews])
-        agreed.append(ea)
+        try:
+            ea, eb = (review_event(r, tolerate=key in resolved) for r in (a, b))
+            for event in (() if key in resolved else (ea, eb)):
+                require(not event.get('event_resolution'), 'A model cannot supply a human resolution.')
+                for field in IMMUTABLE:
+                    if original.get(field) is not None:
+                        require(event.get(field) == original[field], 'Review changed a structured candidate field. ' + field)
+            decision = a['decision']
+            resolution = resolved.get(key)
+            if resolution:
+                ea = json.loads(resolution['event_json'])
+                decision = resolution['decision']
+                require(decision in ('include', 'exclude'), 'Human decision must include or exclude.')
+                for field in IMMUTABLE:
+                    if original.get(field) is not None:
+                        require(ea.get(field) == original[field], 'Resolution changed a structured field. ' + field)
+                require(ea.get('press_release_conflict') is False,
+                        'Resolve the structured timing conflict before publishing.')
+                ea['event_resolution'] = dict(resolved_by='Ebrahim', reason=resolution['reason'],
+                    source_file=str(Path(resolutions).resolve()),
+                    feature_values={t['feature']: t['value'] for t in ea.get('tags', [])})
+                ea['tags'] = [dict(t, tagger='Ebrahim') for t in ea.get('tags', [])]
+            elif (decision != b['decision'] or substantive(ea) != substantive(eb)
+                    or decision not in ('include', 'exclude')
+                    or ea.get('press_release_conflict') is not False):
+                disputes.append(dict(candidate_id=key, review_one=json.dumps(a), review_two=json.dumps(b)))
+                continue
+            else:
+                ea['tags'] = [dict(t, tagger=model) for model, event in (('claude', ea), ('codex', eb))
+                              for t in event.get('tags', [])]
+            # Keep both independent readings, including differing source ranges.
+            ea['review_observations'] = [dict(reviewer=model, decision=r['decision'],
+                                             reason=r['reason'], event=review_event(r, tolerate=bool(resolution)))
+                                         for model, r in (('claude', a), ('codex', b))]
+            from .engine import reconcile_tags
+            ea = reconcile_tags(ea)
+            seal(ea, decision, [str(Path(p).resolve()) for p in reviews])
+            agreed.append(ea)
+        except (ValueError, KeyError, TypeError, OSError) as exc:
+            if key in resolved:
+                raise
+            disputes.append(dict(candidate_id=key, review_one=json.dumps(a), review_two=json.dumps(b),
+                                 reason='Invalid model review. ' + str(exc)))
+
     output = Path(output); output.mkdir(parents=True, exist_ok=True)
     with (output / 'events.csv').open('w', newline='') as f:
         writer = csv.DictWriter(f, fieldnames=FIELDS); writer.writeheader()
@@ -132,12 +142,13 @@ def reconcile(prepared, reviews, output, resolutions=None):
             writer.writerow(dict(candidate_id=e['candidate_id'], decision=e['event_review']['decision'],
                                  event_json=json.dumps(e, sort_keys=True), reason=e.get('event_resolution', {}).get('reason', 'Both reviews agree on substantive fields')))
     with (output / 'disagreements.csv').open('w', newline='') as f:
-        writer = csv.DictWriter(f, fieldnames=['candidate_id', 'review_one', 'review_two'])
+        writer = csv.DictWriter(f, fieldnames=['candidate_id', 'review_one', 'review_two', 'reason'])
         writer.writeheader(); writer.writerows(disputes)
     source['gaps'] = [g for g in source.get('gaps', []) if 'collected candidates still need event review' not in g]
     source.update(as_of=__import__('datetime').date.today().isoformat(), events=agreed, gaps=source.get('gaps', []) +
                   ([f'{len(disputes)} disagreements require Ebrahim in disagreements.csv.'] if disputes else []))
     (output / 'reviewed.json').write_text(json.dumps(source, indent=2) + '\n')
+    register_review(prepared, output)
     return len(disputes)
 
 
@@ -148,7 +159,7 @@ def primary_hashes(value):
             if v.get('source'):
                 paths.add(primary_path(v['source']))
             for key, child in v.items():
-                if key != 'event_review':
+                if key != 'event_review' and not (key == 'review_observations' and value.get('event_resolution')):
                     visit(child)
         elif isinstance(v, list):
             for child in v:
@@ -160,7 +171,7 @@ def primary_hashes(value):
 def seal(event, decision, reviewers):
     """Called only after reconciliation, hashing primary evidence at review time."""
     source_excerpt(event['review_evidence'])
-    for observation in event.get('review_observations', []):
+    for observation in ([] if event.get('event_resolution') else event.get('review_observations', [])):
         if observation['decision'] != 'unresolved' or observation['event'].get('review_evidence'):
             source_excerpt(observation['event']['review_evidence'])
     event['event_review'] = dict(decision=decision, reviewers=reviewers,
@@ -177,3 +188,49 @@ def verify_event_review(event):
     require(primary_hashes(payload) == review['primary_hashes'],
             'Reviewed primary source changed. Repeat independent review.')
     source_excerpt(event['review_evidence'])
+
+
+def review_event(row, tolerate=False):
+    try:
+        value = json.loads(row['event_json'])
+        require(isinstance(value, dict), 'Review event must be an object.')
+        return value
+    except (ValueError, KeyError, TypeError):
+        if not tolerate:
+            raise
+        return {'invalid_review_json': row.get('event_json')}
+
+
+def register_review(prepared, output):
+    """One current result per candidate batch, even when output directories change."""
+    from .locking import job_lock
+    root = REVIEW_ROOT
+    root.mkdir(parents=True, exist_ok=True)
+    path = root / 'active-reviews.json'
+    candidates = json.loads(Path(prepared).read_text())['candidates']
+    with job_lock(root / '.reviews.lock'):
+        active = json.loads(path.read_text()) if path.exists() else {}
+        for candidate in candidates:
+            active[candidate['candidate_id']] = str(Path(output).resolve())
+        path.write_text(json.dumps(active, indent=2) + '\n')
+
+
+def pending_reviews(root):
+    path = Path(root) / 'active-reviews.json'
+    active = json.loads(path.read_text()) if path.exists() else {}
+    for folder in sorted(set(active.values())):
+        path = Path(folder) / 'disagreements.csv'
+        if not path.exists():
+            yield 'Current review output is missing. ' + str(path)
+            continue
+        with path.open(newline='') as f:
+            for row in csv.DictReader(f):
+                if active.get(row['candidate_id']) != folder:
+                    continue
+                details = []
+                for name in ('review_one', 'review_two'):
+                    review = json.loads(row[name])
+                    event = review_event(review, tolerate=True)
+                    details.append(name + ' ' + json.dumps(dict(decision=review.get('decision'),
+                        reason=review.get('reason'), assertions=substantive(event)), sort_keys=True))
+                yield row['candidate_id'] + ' | ' + ' | '.join(details) + ' | ' + row.get('reason', '') + ' [' + str(path) + ']'

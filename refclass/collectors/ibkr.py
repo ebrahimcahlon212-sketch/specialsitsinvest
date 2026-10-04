@@ -19,7 +19,7 @@ def collect(path, *, tickers, since, until):
     if start > end:
         raise ValueError('Start date must not follow end date.')
     wanted = set(tickers) | {'XBI'}
-    result = dict(source='ibkr', prices=[], gaps=[], complete=False,
+    result = dict(source='ibkr', prices=[], ibkr_checks=[], gaps=[], complete=False,
                   scope=dict(since=since, until=until, tickers=sorted(wanted)))
     parsed = {json.dumps(row, sort_keys=True) for row in read_quotes(path)}
     seen = set()
@@ -38,17 +38,24 @@ def collect(path, *, tickers, since, until):
             day = date.fromisoformat(raw['date'])
             if not start <= day <= end:
                 continue
-            row = dict(ticker=raw['ticker'], date=day.isoformat(), close=positive(raw['close']),
-                       adjusted_close=positive(raw['adjusted_close']), source=f'{path}#L{number}')
-            price_evidence(row, cache)
-            key = (row['ticker'], row['date'])
+            observation = dict(ticker=raw['ticker'], date=day.isoformat(), close=positive(raw['close']),
+                               source=f'{path}#L{number}')
+            from ..crosscheck import verify_check
+            verify_check(observation, cache)
+            key = (observation['ticker'], observation['date'])
             if key in seen:
                 raise ValueError('Duplicate daily bar.')
             seen.add(key)
+            result['ibkr_checks'].append(observation)
+            if 'adjusted_close' not in raw:
+                continue
+            row = dict(ticker=raw['ticker'], date=day.isoformat(), close=positive(raw['close']),
+                       adjusted_close=positive(raw['adjusted_close']), source=f'{path}#L{number}')
+            price_evidence(row, cache)
             result['prices'].append(row)
         except (ValueError, KeyError, TypeError) as exc:
             result['gaps'].append(f'{path} L.{number}. {exc}')
-    missing = wanted - {r['ticker'] for r in result['prices']}
+    missing = wanted - {r['ticker'] for r in result['ibkr_checks']}
     result['gaps'].extend(f'{ticker}. No historical bars supplied.' for ticker in sorted(missing))
     result['complete'] = not result['gaps']
     result['gap_count'] = len(result['gaps'])

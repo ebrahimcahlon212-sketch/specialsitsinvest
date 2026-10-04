@@ -10,8 +10,7 @@ def verify_profile(profile, root):
     text = source_excerpt(profile, deal_root=root)
     absent = bool(re.search(
         r'\b(?:we have no|has no|no) (?:FDA[- ]approved|approved|commercial) products\b|'
-        r'\bno products (?:have been |are )?approved for commercial sale\b|'
-        r'\bfirst (?:US |U\.S\. )?(?:approved|commercial) product\b', text, re.I))
+        r'\bno products (?:have been |are )?approved for commercial sale\b', text, re.I))
     if profile.get('first_product') is True:
         require(absent, 'Deal profile source does not establish first-product status.')
     elif profile.get('first_product') is False:
@@ -27,6 +26,10 @@ def verify_profile(profile, root):
         text = source_excerpt(ev, deal_root=root)
         require(ev.get('currency') == 'USD' and ev.get('as_of') == profile['as_of'],
                 'Market value needs USD and matching as-of date.')
+        require(not re.search(r'non[- ]affiliates|public float|enterprise value', text, re.I),
+                'Market value must cover all common shares, not free float or enterprise value.')
+        require(bool(re.search(r'pre[- ]news close', text, re.I)),
+                'Market value must be measured at the pre-news close.')
         dates = [when.isoformat(), f'{when:%B} {when.day}, {when.year}',
                  f'{when.day} {when:%B} {when.year}']
         require(any(d.casefold() in text.casefold() for d in dates),
@@ -35,7 +38,8 @@ def verify_profile(profile, root):
         # matching any number in a passage (such as a share count or a date).
         amounts = []
         for match in re.finditer(
-                r'(?<![\w$])(?:USD\s*|US\$\s*|\$\s*)'
+                r'\b(?:total (?:equity )?market value|market capitalization)\b'
+                r'[^$\n.;]{0,80}?(?<![\w$])(?:USD\s*|US\$\s*|\$\s*)'
                 r'(\d[\d,]*(?:\.\d+)?(?:[eE][+-]?\d+)?)(?!\w|[.,]\d)'
                 r'(?:\s*(billion|million|thousand)\b)?', text, re.I):
             amount = Decimal(match[1].replace(',', ''))
@@ -43,5 +47,5 @@ def verify_profile(profile, root):
             amounts.append(amount * scale[match[2].lower() if match[2] else None])
         value = Decimal(str(profile['market_value']))
         require(value.is_finite() and value > 0 and value in amounts
-                and bool(re.search(r'\bmarket (?:value|capitalization)\b', text, re.I)),
+                and bool(re.search(r'\b(?:total (?:equity )?market value|market capitalization)\b', text, re.I)),
                 'Deal profile source does not establish market value in USD.')
