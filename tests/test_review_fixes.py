@@ -90,11 +90,10 @@ class ReviewFixes(unittest.TestCase):
             with zipfile.ZipFile(archive, "w") as z:
                 for name in upgrade.SEED_ONLY:
                     z.writestr("special-sits-kit/" + name, "New bundled content")
-                z.writestr("special-sits-kit/knowledge/research-standards.md", "Do not install")
             upgrade.install(str(kit), str(archive))
             self.assertEqual(existing.read_text(), "Investor's versioned rules")
             self.assertEqual((kit / "knowledge/refclass-features.md").read_text(), "New bundled content")
-            self.assertFalse((kit / "knowledge/research-standards.md").exists())
+            self.assertEqual((kit / "knowledge/research-standards.md").read_text(), "New bundled content")
 
     def test_background_launcher_logs_and_holds_lock_without_starting_a_job(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -126,8 +125,12 @@ class ReviewFixes(unittest.TestCase):
             for name, first in (("one", True), ("two", False)):
                 folder = root / "deals" / name
                 folder.mkdir(parents=True)
+                (folder / "filings").mkdir()
+                source = folder / "filings/profile.txt"
+                source.write_text("The first US product. Market value USD 1000000.")
                 (folder / "refclass.json").write_text(json.dumps(dict(first_product=first, market_value=1000000,
-                    source="test filing", locator="L.1", as_of="2026-10-04")))
+                    source=str(source), locator="L.1", line_start=1, line_end=1,
+                    market_value_evidence=dict(source=str(source), line_start=1, line_end=1), as_of="2026-10-04")))
             db = root / "events.sqlite"
             build(db, bundle(), root / "knowledge")
             self.assertEqual(report(db, "one", root / "knowledge")["selected_class"], "C")

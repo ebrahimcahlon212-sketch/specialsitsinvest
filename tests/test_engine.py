@@ -174,8 +174,7 @@ class EngineTests(unittest.TestCase):
     def test_real_tags_cannot_be_self_certified(self):
         data = bundle()
         data["fixture"] = False
-        for price in data["prices"]:
-            price["source"] = "offline test bar"
+        data["prices"] = []  # These tests concern tags, not broker provenance.
         for event in data["events"]:
             event["tags"] = [{"feature": "first_product", "value": "yes", "tagger": "reader-one",
                               "locator": "filing L.1", "agreed": True}]
@@ -190,8 +189,7 @@ class EngineTests(unittest.TestCase):
     def test_agreed_tags_and_disagreement(self):
         data = bundle()
         data["fixture"] = False
-        for price in data["prices"]:
-            price["source"] = "offline test bar"
+        data["prices"] = []  # These tests concern tags, not broker provenance.
         for event in data["events"]:
             event["tags"] = [{"feature": "first_product", "value": value, "tagger": who,
                               "locator": "filing L.1"} for who, value in (("one", "yes"), ("two", "yes"))]
@@ -244,9 +242,9 @@ class CLITests(unittest.TestCase):
                          ("refclass", "show", "savara")):
                 proc = subprocess.run(["bash", str(kit / "run.sh"), *args], capture_output=True, text=True,
                                       timeout=20, env={**os.environ, "PYTHONDONTWRITEBYTECODE": "1"})
-                self.assertEqual(proc.returncode, 0, proc.stderr + proc.stdout)
-                if args[:2] == ("refclass", "show"):
-                    self.assertIn("A. Every eligible event", proc.stdout)
-                    self.assertIn("C. First product under $3 billion", proc.stdout)
-                    self.assertIn("SYNTHETIC", proc.stdout)
-                    self.assertIn("Unpriced", proc.stdout)
+                if args[0] == "refclass":
+                    self.assertEqual(proc.returncode, 1, proc.stderr + proc.stdout)
+                    self.assertIn("synthetic fixture", proc.stderr)
+                    self.assertEqual(proc.stdout, "")
+                else:
+                    self.assertEqual(proc.returncode, 0, proc.stderr + proc.stdout)

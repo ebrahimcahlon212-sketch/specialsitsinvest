@@ -1,0 +1,93 @@
+{
+  "files": {
+    "biotech.html": "<!doctype html><html><head><meta charset=\"utf-8\"><meta name=\"viewport\" content=\"width=device-width, initial-scale=1\">\n<title>Upcoming FDA decisions</title><style>\n:root{--bg:#fbfaf7;--ink:#1d1d1b;--muted:#6b6a64;--rule:#e2dfd6;--card:#fff}\n@media (prefers-color-scheme:dark){:root{--bg:#161614;--ink:#ecebe6;--muted:#a3a29c;--rule:#33322e;--card:#1e1e1b}}\nbody{margin:0;background:var(--bg);color:var(--ink);font:15px/1.55 system-ui,-apple-system,Segoe UI,sans-serif}\nmain{max-width:860px;margin:0 auto;padding:1.2rem}h1{font-size:1.5rem}h2{font-size:1.15rem;margin-top:2rem}\n.meta{color:var(--muted);font-size:.85rem}.card{background:var(--card);border:1px solid var(--rule);border-radius:10px;padding:1rem;margin:1rem 0}\n.card h3{margin:.1rem 0}.t{color:var(--muted);font-weight:500}dl{display:grid;grid-template-columns:11rem 1fr;gap:.25rem .8rem;font-size:.9rem}\ndt{color:var(--muted)}dd{margin:0}.act code{font-size:.8rem}.scroll{overflow-x:auto}\ntable{border-collapse:collapse;width:100%;font-size:.85rem}td{padding:.3rem .5rem;border-bottom:1px solid var(--rule)}\n@media (max-width:600px){dl{grid-template-columns:1fr}}</style></head><body><main>\n<h1>Upcoming FDA decisions</h1><p class=\"meta\">1 decisions in the next 15 months, found in filings on 2026-10-04. Cards cover smaller\ncompanies with a decision in the next 9 months. Dates come from the companies' filings, so check the source before acting.</p>\n<h2>Shortlist</h2><article class=\"card\"><h3>Test biotech <span class=\"t\">TEST</span></h3><p class=\"meta\">Decision 2026-11-20 \u00b7 score 4</p><p>Saved test context</p><dl><dt>Drug</dt><dd>Testdrug</dd><dt>Use</dt><dd>Test use</dd><dt>Cash, worked out</dt><dd>$2.50 a share against a $5.00 price, about 18 months of runway</dd></dl><p class=\"act\"><code>./run.sh promote BIO-TEST</code> \u00b7 <a href=\"https://source.invalid/filing\">source filing</a></p></article><h2>Every decision found</h2><div class=\"scroll\"><table><tr><td>2026-11-20</td><td>Test biotech</td><td>TEST</td><td>$100 million</td><td>18 mo</td></tr></table></div></main></body></html>",
+    "biotech.json": "{\n \"rows\": [\n  {\n   \"id\": \"BIO-TEST\",\n   \"ticker\": \"TEST\",\n   \"company\": \"Test biotech\",\n   \"decision_date\": \"2026-11-20\",\n   \"approx\": false,\n   \"otc\": false,\n   \"market_cap\": 100000000,\n   \"cash_per_share\": 2.5,\n   \"price\": 5,\n   \"runway_months\": 18,\n   \"context\": \"Saved test context\",\n   \"source\": \"https://source.invalid/filing\",\n   \"url\": \"https://source.invalid/filing\",\n   \"filing\": {\n    \"url\": \"https://source.invalid/filing\"\n   },\n   \"card\": {\n    \"id\": \"BIO-TEST\",\n    \"score\": 4,\n    \"drug\": \"Testdrug\",\n    \"indication\": \"Test use\"\n   }\n  }\n ]\n}",
+    "biotech.md": "# Upcoming FDA decisions\n\nFound in filings by Python on 2026-10-04. Dates come from the companies' own filings, and approximate dates are the end of the period they give. Cash, burn and runway come from the SEC's XBRL data.\n\n| Decision | Company | Ticker | Market value | Cash per share | Price | Runway | Score | Drug and use |\n|---|---|---|---|---|---|---|---|---|\n| 2026-11-20 | Test biotech | TEST | $100 million | $2.50 | $5.00 | 18 months | 4 | Testdrug for Test use |\n",
+    "shortlist.html": "<!DOCTYPE html>\n<html lang=\"en\"><head><meta charset=\"utf-8\">\n<meta name=\"viewport\" content=\"width=device-width, initial-scale=1, viewport-fit=cover\">\n<title>Special situations, 2026-10-04</title>\n<style>\n:root{--paper:#EEF1F4;--sheet:#FFFFFF;--ink:#18202B;--ink2:#55606E;--rule:#D6DCE3;--flag:#0E6D76;--flagbg:#D9EEEF;--flagink:#08474D;\n--serif:Charter,\"Bitstream Charter\",\"Sitka Text\",Cambria,Georgia,serif;--sans:-apple-system,BlinkMacSystemFont,\"Segoe UI\",Roboto,\"Helvetica Neue\",Arial,sans-serif;--mono:ui-monospace,\"SF Mono\",Menlo,Consolas,monospace;\nbox-sizing:border-box;padding-top:env(safe-area-inset-top,0px);padding-bottom:env(safe-area-inset-bottom,0px);color-scheme:light}\n@media (prefers-color-scheme:dark){:root:not([data-theme=\"light\"]){--paper:#0E1217;--sheet:#161C23;--ink:#E3E8EE;--ink2:#9AA5B2;--rule:#29313B;--flag:#4CC0C9;--flagbg:#113A3F;--flagink:#A7E6EA;color-scheme:dark}}\n:root[data-theme=\"dark\"]{--paper:#0E1217;--sheet:#161C23;--ink:#E3E8EE;--ink2:#9AA5B2;--rule:#29313B;--flag:#4CC0C9;--flagbg:#113A3F;--flagink:#A7E6EA;color-scheme:dark}\n*,*::before,*::after{box-sizing:inherit}\nhtml{scroll-padding-top:env(safe-area-inset-top,0px)}\nbody{margin:0;background:var(--paper);color:var(--ink);font:16px/1.55 var(--sans)}\nmain{max-width:46rem;margin:0 auto;padding:1.2rem .9rem 3rem}\nh1{font-size:1.3rem;margin:.2rem 0 .1rem;letter-spacing:-.01em}\n.meta{color:var(--ink2);font-size:.85rem;margin:0 0 1.2rem}\nh2{font-size:1rem;margin:1.6rem 0 .7rem;color:var(--ink2)}\n.card{background:var(--sheet);border:1px solid var(--rule);border-radius:10px;padding:1rem 1.05rem;margin:0 0 .9rem}\n.card header{display:flex;justify-content:space-between;align-items:flex-start;gap:.6rem}\n.who{font-weight:650;font-size:.95rem}\n.tick{display:inline-block;font:700 .78rem/1.2 var(--sans);padding:.2rem .7rem .2rem .45rem;background:var(--flagbg);color:var(--flagink);clip-path:polygon(0 0,100% 0,calc(100% - 6px) 50%,100% 100%,0 100%);margin-right:.25rem;vertical-align:.1em}\n.chip{flex:none;font-size:.75rem;color:var(--ink2);border:1px solid var(--rule);border-radius:999px;padding:.15rem .55rem}\n.head{font:1.05rem/1.45 var(--serif);margin:.6rem 0 .4rem}\n.quote{font-size:.8rem;color:var(--ink2);margin:0 0 .4rem}\n.scroll{overflow-x:auto}\ntable.ins{border-collapse:collapse;font-size:.8rem;width:100%}\ntable.ins th,table.ins td{text-align:left;padding:.35rem .5rem;border-bottom:1px solid var(--rule);vertical-align:top}\n.small{font-weight:650;color:var(--flagink);background:var(--flagbg);border-radius:999px;padding:.05rem .45rem;margin-left:.3rem}\ndl{margin:.4rem 0 .6rem}dt{font-size:.78rem;font-weight:650;color:var(--ink2);margin-top:.5rem}dd{margin:.1rem 0 0;font-size:.92rem}\n.scoreline{display:flex;align-items:center;gap:.6rem;font-size:.84rem;color:var(--ink2);border-top:1px solid var(--rule);padding-top:.6rem}\n.dots{display:inline-flex;gap:3px;flex:none}.dot{width:9px;height:9px;border-radius:2px;background:var(--rule)}.dot.on{background:var(--flag)}\n.actions{display:flex;flex-wrap:wrap;align-items:center;gap:.5rem;margin-top:.6rem;font-size:.85rem}\n.actions a{color:var(--flag);font-weight:600}\n.actions a.report{color:var(--sheet);background:var(--flag);padding:.3rem .6rem;border-radius:6px;text-decoration:none}\n.actions code{font:.78rem var(--mono);background:var(--paper);padding:.25rem .45rem;border-radius:5px;overflow-x:auto;max-width:100%}\nbutton.copy{font:600 .78rem var(--sans);color:var(--ink);background:transparent;border:1px solid var(--rule);border-radius:6px;padding:.25rem .55rem;cursor:pointer}\ndetails{background:var(--sheet);border:1px solid var(--rule);border-radius:10px;padding:.7rem 1rem;margin:.9rem 0}\nsummary{cursor:pointer;font-weight:650;font-size:.92rem}\nul.plain{margin:.6rem 0 0;padding-left:1.1rem;font-size:.9rem}ul.plain li{margin:.35rem 0}\nul.plain a,section a{color:var(--flag)}\n.empty{color:var(--ink2)}\n:focus-visible{outline:2px solid var(--flag);outline-offset:2px}\n</style></head>\n<body><main>\n<h1>Special situations, 2026-10-04</h1>\n<p class=\"meta\">0 worth a look, 0 low, 0 not reviewed, plus 1 UK event. Scores come from a model reading the filing excerpt, so treat them as a reading order, not a verdict.</p>\n<section><h2>New situations</h2><p class=\"empty\">Nothing new scored 3 or higher this time.</p></section><section><h2>UK events</h2><p class=\"meta\">Tenders, wind-downs, liquidations, returns of capital and demergers from recent announcements. Check the source before acting.</p><article class=\"card\"><header><div class=\"who\"><span class=\"tick\">TEST</span> Test UK plc</div><span class=\"chip\">UK, tender</span></header><p class=\"head\"></p><dl></dl><div class=\"scoreline\"><span class=\"dots\" aria-hidden=\"true\"><span class=\"dot on\"></span><span class=\"dot on\"></span><span class=\"dot on\"></span><span class=\"dot on\"></span><span class=\"dot\"></span></span><span>Score 4 of 5. </span></div><div class=\"actions\"><a href=\"https://source.invalid/uk\" rel=\"noopener\">Open the source</a><code>./run.sh promote UKE-TESTUK-EVT</code><button type=\"button\" class=\"copy\" data-cmd=\"./run.sh promote UKE-TESTUK-EVT\">Copy</button></div></article></section>\n</main>\n<script>\ndocument.addEventListener(\"click\",function(e){var b=e.target.closest(\"button.copy\");if(!b)return;var t=b.getAttribute(\"data-cmd\");\nfunction done(){b.textContent=\"Copied\";setTimeout(function(){b.textContent=\"Copy\"},1500)}\nif(navigator.clipboard&&navigator.clipboard.writeText){navigator.clipboard.writeText(t).then(done,function(){})}else{var r=document.createRange();r.selectNodeContents(b.previousElementSibling);var s=getSelection();s.removeAllRanges();s.addRange(r)}});\n</script>\n</body></html>\n",
+    "shortlist.md": "# Special situations, 2026-10-04\n\n## New situations\n\nNothing new scored 3 or higher.\n",
+    "uk-events-tickers.txt": "TEST (London Stock Exchange, give the price in pence)\n",
+    "uk_events.json": "{\n \"new\": [\n  {\n   \"id\": \"UKE-TESTUK-EVT\",\n   \"company\": \"Test UK plc\",\n   \"ticker\": \"TEST\",\n   \"isin\": \"\",\n   \"category\": \"uk event\",\n   \"event\": \"tender\",\n   \"found\": \"2026-10-04\",\n   \"stage\": \"tender\",\n   \"card\": {\n    \"company\": \"Test UK plc\",\n    \"ticker\": \"TEST\",\n    \"event\": \"tender\",\n    \"date\": \"2026-11-20\",\n    \"url\": \"https://source.invalid/uk\",\n    \"cash_per_share\": 137,\n    \"score\": 4,\n    \"type\": \"uk event\",\n    \"source\": \"https://source.invalid/uk\",\n    \"stage\": \"tender\"\n   }\n  }\n ]\n}"
+  },
+  "valuation": {
+    "claims_m": 5.0,
+    "currency": "GBX",
+    "dcf": [],
+    "history": [
+      {
+        "capex_to_revenue": null,
+        "ebit_margin": null,
+        "ebitda_margin": 0.2,
+        "fcf_conversion": 0.5,
+        "growth": null,
+        "revenue_m": 20.0,
+        "year": 2024
+      },
+      {
+        "capex_to_revenue": null,
+        "ebit_margin": null,
+        "ebitda_margin": 0.2,
+        "fcf_conversion": 0.6,
+        "growth": 0.25,
+        "revenue_m": 25.0,
+        "year": 2025
+      }
+    ],
+    "multiples": [
+      {
+        "fwd": 310.0,
+        "last": 250.0,
+        "multiple": 6.0
+      },
+      {
+        "fwd": 430.0,
+        "last": 350.0,
+        "multiple": 8.0
+      },
+      {
+        "fwd": 550.0,
+        "last": 450.0,
+        "multiple": 10.0
+      },
+      {
+        "fwd": 670.0,
+        "last": 550.0,
+        "multiple": 12.0
+      }
+    ],
+    "revenue_cagr": 0.25,
+    "rows": [
+      {
+        "ev_ebit_last": null,
+        "ev_ebitda_fwd": 2.5,
+        "ev_ebitda_last": 3.0,
+        "ev_m": 15.0,
+        "fcf_yield_last": 0.3,
+        "label": "Undisturbed price",
+        "mcap_m": 10.0,
+        "price": 100.0
+      },
+      {
+        "ev_ebit_last": null,
+        "ev_ebitda_fwd": 2.8333333333333335,
+        "ev_ebitda_last": 3.4,
+        "ev_m": 17.0,
+        "fcf_yield_last": 0.25,
+        "label": "Today's price",
+        "mcap_m": 12.0,
+        "price": 120
+      },
+      {
+        "ev_ebit_last": null,
+        "ev_ebitda_fwd": 3.3333333333333335,
+        "ev_ebitda_last": 4.0,
+        "ev_m": 20.0,
+        "fcf_yield_last": 0.2,
+        "label": "Offer",
+        "mcap_m": 15.0,
+        "price": 150.0
+      }
+    ],
+    "shares_m": 10.0
+  },
+  "valuation_md": "## Valuation from the calculator\n\nWorked out by Python from the extracted inputs on 2026-10-04. Money figures are in millions of the reporting currency (GBP) and prices are per share in GBX. Claims ahead of shareholders, meaning net debt, leases and other claims, come to 5.0 million.\n\n### What the price implies\n\n| Price | Per share | Market value | Enterprise value | EV to last EBITDA | EV to next year's EBITDA | EV to last EBIT | Free cash flow yield |\n|---|---|---|---|---|---|---|---|\n| Undisturbed price | 100.00p | 10.0 | 15.0 | 3.0x | 2.5x | n/a | 30.00% |\n| Today's price | 120.00p | 12.0 | 17.0 | 3.4x | 2.8x | n/a | 25.00% |\n| Offer | 150.00p | 15.0 | 20.0 | 4.0x | 3.3x | n/a | 20.00% |\n\n### History\n\n| Year | Revenue | Growth | EBITDA margin | EBIT margin | Capex to revenue | Cash conversion |\n|---|---|---|---|---|---|---|\n| 2024 | 20.0 | n/a | 20.00% | n/a | n/a | 50.00% |\n| 2025 | 25.0 | 25.00% | 20.00% | n/a | n/a | 60.00% |\n\nRevenue grew 25.00% a year on average over the period. Cash conversion is free cash flow divided by EBITDA.\n\n### Value per share at different EBITDA multiples\n\n| EV to EBITDA | On last year's EBITDA | On next year's EBITDA |\n|---|---|---|\n| 6.0x | 250.00p | 310.00p |\n| 8.0x | 350.00p | 430.00p |\n| 10.0x | 450.00p | 550.00p |\n| 12.0x | 550.00p | 670.00p |\n"
+}

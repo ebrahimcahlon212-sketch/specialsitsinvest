@@ -153,6 +153,7 @@ def reconcile_tags(event):
 
 
 SCHEMA = """
+CREATE TABLE IF NOT EXISTS candidates (candidate_id TEXT PRIMARY KEY, payload TEXT NOT NULL);
 CREATE TABLE IF NOT EXISTS metadata (key TEXT PRIMARY KEY, value TEXT NOT NULL);
 CREATE TABLE IF NOT EXISTS events (
  event_id TEXT PRIMARY KEY, company TEXT NOT NULL, ticker TEXT NOT NULL,
@@ -186,18 +187,21 @@ def build(db, snapshot, knowledge, update=False):
             for key, value in rules.items():
                 if key in previous and json.loads(previous[key]) != value:
                     raise ValueError("Rules or features changed. Rebuild before updating.")
+            old_candidates = [json.loads(row[0]) for row in connection.execute("SELECT payload FROM candidates")]
             old_events = [json.loads(row[0]) for row in connection.execute("SELECT payload FROM events")]
             connection.row_factory = sqlite3.Row
             old_prices = [dict(row) for row in connection.execute("SELECT * FROM prices")]
             old_sessions = [dict(row) for row in connection.execute("SELECT * FROM sessions")]
             connection.row_factory = None
             snapshot = dict(snapshot)
-            for key, old, identity in (("events", old_events, lambda x: x["event_id"]),
+            for key, old, identity in (("candidates", old_candidates, lambda x: x["candidate_id"]),
+                                       ("events", old_events, lambda x: x["event_id"]),
                                        ("prices", old_prices, lambda x: (x["ticker"], x["date"])),
                                        ("sessions", old_sessions, lambda x: x["date"])):
                 merged = {identity(row): row for row in old}
                 merged.update({identity(row): row for row in snapshot.get(key, [])})
                 snapshot[key] = list(merged.values())
+            snapshot["pending_candidates"] = sorted(set(json.loads(previous.get("pending_candidates", "[]")) + snapshot.get("pending_candidates", [])))
             snapshot["fixture"] = bool(snapshot.get("fixture") or json.loads(previous.get("fixture", "false")))
             coverage = json.loads(previous.get("coverage", "{}"))
             coverage.update(snapshot.get("coverage", {}))
@@ -210,6 +214,10 @@ def build(db, snapshot, knowledge, update=False):
             if any("synthetic" in str(p.get("source", "")).lower() or "fixture" in str(p.get("source", "")).lower()
                    for p in prices):
                 raise ValueError("Synthetic price sources require fixture=true; they cannot be production inputs.")
+        if not snapshot.get("fixture"):
+            from .publication import price_evidence
+            for price in prices:
+                price_evidence(price)
         seen = set()
         prepared = []
         for event in events:
@@ -239,13 +247,20 @@ def build(db, snapshot, knowledge, update=False):
             if time.fromisoformat(row["open"]) >= time.fromisoformat(row["close"]):
                 raise ValueError("Session open must precede close")
         coverage = snapshot.get("coverage", {})
-        metadata = dict(rules, as_of=as_of, fixture=bool(snapshot.get("fixture")),
+        if "candidates" in snapshot:
+            linked = {e.get("candidate_id") for e in events}
+            snapshot["pending_candidates"] = sorted(c["candidate_id"] for c in snapshot["candidates"]
+                                                     if c["candidate_id"] not in linked)
+        metadata = dict(rules, candidate_count=len(snapshot.get("candidates", [])),
+                        pending_candidates=snapshot.get("pending_candidates", []), as_of=as_of, fixture=bool(snapshot.get("fixture")),
                         coverage=coverage, gaps=sorted(set(snapshot.get("gaps", []) +
                                                           [f"{s}. Source not supplied" for s in SOURCES if not coverage.get(s)])),
                         summary_convention="Median and linearly interpolated 25th/75th percentiles (type 7)")
-        for table in ("events", "prices", "sessions", "reactions", "tags", "metadata"):
+        for table in ("candidates", "events", "prices", "sessions", "reactions", "tags", "metadata"):
             connection.execute("DELETE FROM " + table)
         connection.executemany("INSERT INTO metadata VALUES (?,?)", [(k, json.dumps(v)) for k, v in metadata.items()])
+        connection.executemany("INSERT INTO candidates VALUES (?,?)",
+                               [(c["candidate_id"], json.dumps(c)) for c in snapshot.get("candidates", [])])
         for event, excluded, cap, r in prepared:
             connection.execute("INSERT INTO events VALUES (?,?,?,?,?,?,?,?,?,?,?,?)",
                                (*[event.get(k) for k in ("event_id", "company", "ticker", "drug", "application", "event_type",
@@ -317,6 +332,18 @@ def report(db, name, knowledge):
             if not profile.get("source") or not profile.get("locator") or not profile.get("as_of"):
                 raise ValueError("Deal reference-class profile needs source, locator and as_of")
             date.fromisoformat(profile["as_of"])
+            from .quality import source_excerpt, require
+            excerpt = source_excerpt(profile, deal_root=profile_path.parent)
+            # The saved statement must support the fields used to select a class.
+            import re
+            if profile.get("first_product") is True:
+                require(bool(re.search(r"(?:first (?:US |U\.S\. )?product|no (?:approved|commercial) products)", excerpt, re.I)),
+                        "Deal profile source does not establish first-product status.")
+            if profile.get("market_value") is not None:
+                cap_evidence = profile["market_value_evidence"]
+                source_excerpt(cap_evidence, deal_root=profile_path.parent)
+                require(str(profile["market_value"]) in source_excerpt(cap_evidence, deal_root=profile_path.parent).replace(",", ""),
+                        "Deal profile source does not establish market value in USD.")
             selected = "A"
             if profile.get("first_product") is True:
                 selected = "B"
@@ -348,6 +375,7 @@ def render(result):
                      f'[{profile["source"]}, {profile["locator"]}]')
     if result["fixture"]:
         lines.append("SYNTHETIC fixture metadata and XBI. This is not a historical census or a live-use result.")
+    lines.append(f"Collected candidates {result.get('candidate_count', 0)}. Pending candidate reviews {len(result.get('pending_candidates', []))}.")
     lines += [f'Found {result["found"]}. Eligible {result["eligible"]}. Excluded {result["excluded"]}. '
               f'Unpriced {result["unpriced"]}. Unknown announcement time {result["unknown_time"]}. '
               f'Unknown market value {result["unknown_market_value"]}. '

@@ -23,3 +23,6 @@ __pycache__/
 *.log
 .locks/
 data/refclass*.sqlite*
+
+!/knowledge/INDEX.md
+!/knowledge/research-standards.md

@@ -6,7 +6,7 @@ The SEC acceptance timestamp is retained separately from company announcement ti
 from datetime import date
 import html
 import re
-from lib.prep import _HTMLText
+from lib.prep import html_text
 from .http import CollectionError
 
 SIGNALS = {
@@ -66,9 +66,7 @@ def documents(raw, base):
 
 
 def read_document(raw, origin, form):
-    parser = _HTMLText()
-    parser.feed(raw.decode('utf-8', 'replace')); parser.close()
-    text = parser.text()
+    text = html_text(raw.decode('utf-8', 'replace'))
     lines = text.splitlines()
     signals = []
     for number, line in enumerate(lines, 1):
@@ -77,7 +75,7 @@ def read_document(raw, origin, form):
             signals.append(dict(kinds=matches, line=number, text=line))
     return dict(form=form, source=origin['source'], url=origin['url'],
                 downloaded_at=origin['downloaded_at'], sha256=origin['sha256'],
-                text=text, signals=signals, locator_convention='1-based lines of text, extracted with lib.prep._HTMLText')
+                text=text, signals=signals, locator_convention='1-based lines of text, extracted with lib.prep.html_text')
 
 
 def collect(client, cik, *, since='2015-01-01', until=None, max_filings=1, max_history=1, max_exhibits=2):
@@ -111,7 +109,11 @@ def collect(client, cik, *, since='2015-01-01', until=None, max_filings=1, max_h
                 result['gaps'].append(f'{name}. {exc}')
         chosen = {}
         for row in rows:
-            date.fromisoformat(row['filingDate'])
+            try:
+                date.fromisoformat(row['filingDate'])
+            except (ValueError, TypeError) as exc:
+                result['gaps'].append(f"Invalid filingDate for {row.get('accessionNumber')}. {exc}")
+                continue
             if row['form'] in ('8-K', '8-K/A') and since <= row['filingDate'] <= until:
                 chosen.setdefault(row['accessionNumber'], row)
         result['inventory_count'] = len(chosen)

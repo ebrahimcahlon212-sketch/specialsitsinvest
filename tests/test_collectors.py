@@ -5,6 +5,7 @@ import json
 import os
 from pathlib import Path
 import subprocess
+import shutil
 import sys
 import tempfile
 import unittest
@@ -20,7 +21,18 @@ QUERY = 'application_number:NDA* AND submissions.submission_status_date:[2025010
 
 
 def fixture_client():
-    return Client(CACHE, offline=True, opener=lambda *a, **kw: (_ for _ in ()).throw(AssertionError('Network attempted')))
+    client = Client(CACHE, offline=True, opener=lambda *a, **kw: (_ for _ in ()).throw(AssertionError('Network attempted')))
+    original = client.json
+    def replay(url):
+        # Parser replay only. The old downloaded samples predate automatic
+        # date filters. Keep their actual source URL and download provenance.
+        if url.startswith('https://api.fda.gov/'):
+            endpoint = url.split('?')[0]
+            saved = next(r['url'] for r in client.records if r['url'].split('?')[0] == endpoint)
+            return original(saved)
+        return original(url)
+    client.json = replay
+    return client
 
 
 class RealResponseTests(unittest.TestCase):
@@ -91,16 +103,19 @@ class RealResponseTests(unittest.TestCase):
     def test_offline_cli_writes_staging_and_reports_partial_coverage(self):
         with tempfile.TemporaryDirectory() as tmp:
             out = Path(tmp) / 'collected.json'
+            cache = Path(tmp) / 'cache'
+            shutil.copytree(CACHE, cache, ignore=shutil.ignore_patterns('*.lock'))
             result = subprocess.run([sys.executable, '-m', 'refclass', 'collect', 'drugs_at_fda',
-                                     '--offline', '--cache', str(CACHE), '--output', str(out),
+                                     '--offline', '--cache', str(cache), '--output', str(out),
                                      '--page-size', '2', '--search', QUERY, '--until', '2026-10-04'],
                                     cwd=ROOT, capture_output=True, text=True)
             self.assertEqual(result.returncode, 1, result.stderr)
             data = json.loads(out.read_text())
             self.assertEqual(data['stage'], 'source_candidates_not_verified_events')
-            self.assertEqual(data['candidate_count'], 1)
+            self.assertEqual(data['candidate_count'], 0)
+            self.assertIn('missing from offline', ' '.join(data['gaps']))
             result = subprocess.run([sys.executable, '-m', 'refclass', 'collect', 'edgar', '--offline',
-                                     '--cache', str(CACHE), '--output', str(out), '--cik', '1160308',
+                                     '--cache', str(cache), '--output', str(out), '--cik', '1160308',
                                      '--since', '2025-10-30', '--until', '2025-10-30', '--max-history', '0', '--max-exhibits', '1'],
                                     cwd=ROOT, capture_output=True, text=True)
             self.assertEqual(result.returncode, 0, result.stderr)

@@ -11,8 +11,10 @@ import sys
 def launch(args, root, log_dir=None):
     parser = argparse.ArgumentParser(add_help=False)
     parser.add_argument("--db", default=os.environ.get("REFCLASS_DB", str(root / "data/refclass.sqlite")))
+    parser.add_argument("--cache", type=Path)
     options, _ = parser.parse_known_args(args)
-    lock = Path(str(Path(options.db).resolve()) + ".job.lock")
+    lock = (options.cache.resolve() / ".collection.job.lock" if args[0] == "collect" and options.cache
+            else Path(str(Path(options.db).resolve()) + ".job.lock"))
     lock.parent.mkdir(parents=True, exist_ok=True)
     fd = os.open(lock, os.O_CREAT | os.O_RDWR, 0o600)
     try:

@@ -14,7 +14,7 @@ def job_key(args):
         return None  # Database writes have their own lock.
     if len(args) > 1 and args[1] in {"ask", "view", "ledger"}:
         return None
-    identity = args[:2] if len(args) > 1 else [args[0], "run"]
+    identity = [args[0]]  # All writers for a deal share its out/ directory.
     return hashlib.sha256("\0".join(identity).encode()).hexdigest()[:24]
 
 

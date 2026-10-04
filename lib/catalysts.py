@@ -23,7 +23,8 @@ import re
 import sys
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-from quality_gate import preflight
+from quality_gate import preflight, warn_check
+from refclass.quality import discount, require
 import finder  # noqa: E402
 
 TODAY = datetime.date.today()
@@ -139,7 +140,12 @@ def numbers(e):
     except (TypeError, ValueError):
         a = None
     if a and p:
+        checked_discount = warn_check(discount, a, e.get("anchor_unit") or e.get("anchor_currency") or e.get("currency") or "USD",
+                   p, e.get("price_unit") or e.get("currency") or "USD", e.get("fx"))
         out["discount"] = 1 - p / a
+        if checked_discount is not None:
+            warn_check(require, abs(out["discount"] - checked_discount) <= .00005,
+                       "Units and currency gate failed. Legacy discount uses different units; compare converted NAV and price.")
         out["upside"] = a / p - 1
         kind = (e.get("anchor_kind") or "").lower()
         if days and days > 14 and any(w in kind for w in PAYOUT_ANCHORS):

@@ -9,6 +9,7 @@ import time
 import urllib.error
 import urllib.parse
 import urllib.request
+from ..locking import job_lock
 
 HOSTS = {'api.fda.gov', 'data.sec.gov', 'www.sec.gov'}
 
@@ -111,8 +112,13 @@ class Client:
         (self.cache / name).write_bytes(raw)
         record = dict(url=url, downloaded_at=datetime.now(timezone.utc).isoformat(),
                       status=status, content_type=content_type, bytes=len(raw), sha256=digest, file=name)
-        self.records.append(record)
-        (self.cache / 'manifest.json').write_text(json.dumps(self.records, indent=2) + '\n')
+        with job_lock(self.cache / '.manifest.lock'):
+            manifest = self.cache / 'manifest.json'
+            self.records = json.loads(manifest.read_text()) if manifest.exists() else []
+            self.records.append(record)
+            temporary = self.cache / 'manifest.json.tmp'
+            temporary.write_text(json.dumps(self.records, indent=2) + '\n')
+            temporary.replace(manifest)
         return raw, dict(record, source=str((self.cache / name).resolve()))
 
     def json(self, url):

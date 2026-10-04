@@ -1243,7 +1243,7 @@ case "$WEB_MODEL" in claude|codex) ;; *) die "WEB_MODEL must be claude or codex,
 case "${1:-help}" in
   refclass)
     shift
-    if [ "${1:-}" = build ] || [ "${1:-}" = update ]; then
+    if [ "${1:-}" = build ] || [ "${1:-}" = update ] || [ "${1:-}" = collect ]; then
       foreground=false
       refclass_args=()
       for arg in "$@"; do

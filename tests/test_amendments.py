@@ -46,7 +46,10 @@ class AmendmentTests(unittest.TestCase):
                 stderr = io.StringIO()
                 with redirect_stderr(stderr):
                     self.assertIsNone(preflight(p))
-                self.assertIn('Warning.', stderr.getvalue())
+                if content is None:
+                    self.assertEqual(stderr.getvalue(), '')
+                else:
+                    self.assertIn('Warning.', stderr.getvalue())
                 with self.assertRaises(GateError):
                     preflight(p, strict=True)
 
@@ -157,8 +160,8 @@ call_codex() {
         with tempfile.TemporaryDirectory() as tmp:
             p = Path(tmp) / 'deals/test/filings/source.txt'; p.parent.mkdir(parents=True)
             ev = dict(source=str(p), line_start=1, line_end=1)
-            for sentence in ('We expect a PDUFA target action date of November 20, 2026 for the NDA submitted in March.',
-                             'We anticipate a goal date of Nov. 20, 2026.', 'The action date is 20 November 2026.'):
+            for sentence in ('The FDA assigned a PDUFA target action date of November 20, 2026 for the NDA submitted in March.',
+                             'The FDA set a goal date of Nov. 20, 2026.', 'The action date is 20 November 2026.'):
                 p.write_text(sentence)
                 decision_date('fda_goal', '2026-11-20', ev)
             p.write_text('Submitted on November 20, 2026 for a PDUFA goal date of March 20, 2027.')

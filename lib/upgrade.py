@@ -22,7 +22,8 @@ import zipfile
 
 PROGRAM = ["run.sh", "AGENTS.md", "CLAUDE.md", "README.md", "VERSION", "LICENSE", ".gitignore", "settings.example.env",
            "lib/", "prompts/", "templates/", "docs/", "case-studies/", "refclass/", "tests/"]
-SEED_ONLY = {"knowledge/refclass-rules.md", "knowledge/refclass-features.md"}
+SEED_ONLY = {"knowledge/refclass-rules.md", "knowledge/refclass-features.md",
+             "knowledge/INDEX.md", "knowledge/research-standards.md"}
 PATTERNS = ["~/special-sits-kit*.zip", "~/Downloads/special-sits-kit*.zip",
             "/mnt/c/Users/*/Downloads/special-sits-kit*.zip", "/mnt/c/Users/*/Desktop/special-sits-kit*.zip",
             "/mnt/c/Users/*/OneDrive*/Downloads/special-sits-kit*.zip", "/mnt/c/Users/*/OneDrive*/Desktop/special-sits-kit*.zip"]

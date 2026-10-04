@@ -21,6 +21,7 @@ import sys
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from quality_gate import preflight
+from refclass.quality import whole_holding
 
 TODAY = datetime.date.today()
 
@@ -227,6 +228,11 @@ def compute(t, prices):
                         item["return_withheld"] = (frac * tprice * (1 - us_dividend_tax()) + (1 - frac) * b) / (px * (1 + costs)) - 1
                     row["results"].append(item)
                 rows.append(row)
+        if rows and "spread_pct" in res:
+            expected = whole_holding(px * (1 + costs), tprice, rows[0]["accepted"], back_list[0][1])
+            if abs(res["spread_pct"] - expected) > .00005:
+                print("Warning. Partial tender gate failed. Headline is not the whole-holding return "
+                      "at full participation. Compare the tender scenarios.", file=sys.stderr)
         res["tender"] = {"price": tprice, "rows": rows, "days": pdays,
                          "odd_lot": bool(tender.get("odd_lot_priority")),
                          "odd_lot_return": (tprice / (px * (1 + costs)) - 1) if tender.get("odd_lot_priority") else None,

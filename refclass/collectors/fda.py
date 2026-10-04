@@ -80,8 +80,9 @@ def collect(client, source, *, since='2015-01-01', until=None, page_size=10, max
             output['gaps'].append('openFDA skip limit reached. Partition the search before continuing.')
             break
         query = dict(limit=page_size, skip=skip)
-        if search:
-            query['search'] = search
+        field = 'submissions.submission_status_date' if source == 'drugs_at_fda' else 'letter_date'
+        window = f"{field}:[{since.replace('-', '')} TO {until.replace('-', '')}]"
+        query['search'] = f'({search}) AND {window}' if search else window
         url = ENDPOINTS[source] + '?' + urlencode(query)
         try:
             data, origin = client.json(url)
@@ -118,5 +119,9 @@ def collect(client, source, *, since='2015-01-01', until=None, page_size=10, max
     output['complete'] = output['complete'] and not output['gaps']
     output['gap_count'] = len(output['gaps'])
     output['candidate_count'] = len(output['candidates'])
+    output['coverage_gaps'] = (['Drugs@FDA API covers CDER, not a complete CBER BLA census.']
+                               if source == 'drugs_at_fda' else
+                               ['Published CRLs do not establish coverage of unpublished letters.'])
+    output['gap_count'] += len(output['coverage_gaps'])
     output['scope'] = dict(since=since, until=until, search=search, page_size=page_size, max_pages=max_pages)
     return output

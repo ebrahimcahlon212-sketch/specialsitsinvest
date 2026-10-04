@@ -14,6 +14,8 @@ from refclass.quality import GateError, validate
 def preflight(directory, evidence_path=None, *, strict=False):
     path = Path(evidence_path) if evidence_path and Path(evidence_path).exists() else Path(directory) / "quality.json"
     try:
+        if not path.exists() and not strict:
+            return None  # Evidence is not produced by legacy research steps.
         if not path.exists():
             raise GateError(f"Quality gate evidence missing. {path}")
         return validate(json.loads(path.read_text()), deal_root=Path(directory).resolve().parent)
@@ -29,3 +31,12 @@ if __name__ == "__main__":
         preflight(sys.argv[1], strict="--strict" in sys.argv[2:])
     except (GateError, OSError) as exc:
         sys.exit(f"Stopped. {exc}")
+
+
+def warn_check(check, *args, **kwargs):
+    """Run a check on actual legacy inputs without changing its output contract."""
+    try:
+        return check(*args, **kwargs)
+    except (ValueError, TypeError, KeyError, ArithmeticError) as exc:
+        print(f"Warning. {exc}", file=sys.stderr)
+        return None

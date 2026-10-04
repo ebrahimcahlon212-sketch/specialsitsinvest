@@ -90,15 +90,17 @@ def decision_date(kind, value=None, evidence=None):
     # Protect abbreviated months from sentence splitting, then bind the date
     # to an FDA clause. A submission date elsewhere in the sentence is not an action.
     excerpt = re.sub(r"\b(Jan|Feb|Mar|Apr|Jun|Jul|Aug|Sep|Sept|Oct|Nov|Dec)\.", r"\1", excerpt, flags=re.I)
-    month = rf"(?:{day.strftime('%B')}|{day.strftime('%b')})"
-    dates = rf"(?:{re.escape(value)}|{month}\s+{day.day},?\s+{day.year}|{day.day}\s+{month}\s+{day.year})"
+    month = rf"(?:{day.strftime('%B')}|{day.strftime('%b')}" + ("|Sept" if day.month == 9 else "") + ")"
+    dates = rf"(?:{re.escape(value)}|{month}\s+0?{day.day},?\s+{day.year}|0?{day.day}\s+{month}\s+{day.year})"
     sentences = re.split(r"(?<=[.!?])\s+", excerpt)
     if kind == "fda_goal":
-        pattern = rf"(?:PDUFA(?: target)?(?: action)?(?: goal)? date|target action date|goal date|action date)\s*(?:of|is|was|has been set for|set for|for|on|:)?\s*{dates}"
+        clause = r"(?:PDUFA(?: target)?(?: action)?(?: goal)? date|target action date|goal date|action date)"
+        pattern = rf"{clause}\s*(?:of|is|was|has been set for|set for|for|on|:)?\s*{dates}"
     else:
-        pattern = rf"(?:FDA (?:has )?approved|FDA (?:has )?rejected|received (?:a |an )?complete response letter).{{0,100}}?{dates}"
+        action = r"(?:FDA\)?\s+(?:has\s+)?(?:approved|rejected|issued (?:a |an )?complete response letter)|received (?:a |an )?complete response letter)"
+        pattern = rf"(?:{action}.{{0,100}}?{dates}|{dates},?\s+(?:the\s+)?\(?{action})"
     require(any(re.search(pattern, sentence, re.I) and
-                (kind == "fda_goal" or not re.search(r"expect|anticipat|plan|intend", sentence, re.I))
+                not re.search(r"\b(?:expect\w*|anticipat\w*|plan\w*|intend\w*)\b", sentence, re.I)
                 for sentence in sentences),
             "Date type gate failed. Source does not unambiguously support this FDA date; review required.")
 

@@ -220,6 +220,14 @@ def read_text(src):
         return raw.decode("cp1252", errors="replace")
 
 
+def html_text(text):
+    """Extract stable readable lines from a primary HTML document."""
+    parser = _HTMLText()
+    parser.feed(text)
+    parser.close()
+    return parser.text()
+
+
 def prep_text(src, dest, is_html):
     s = read_text(src)
     if is_html:

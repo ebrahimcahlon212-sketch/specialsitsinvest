@@ -67,16 +67,17 @@ def deal_tickers(deal):
 
 def read_quotes(path):
     quotes = []
-    for line in open(path, encoding="utf-8", errors="replace"):
-        m = re.search(r"\{.*\}", line)
-        if not m:
-            continue
-        try:
-            q = json.loads(m.group(0))
-        except ValueError:
-            continue
-        if isinstance(q, dict) and q.get("ticker"):
-            quotes.append(q)
+    with open(path, encoding="utf-8", errors="replace") as handle:
+        for line in handle:
+            m = re.search(r"\{.*\}", line)
+            if not m:
+                continue
+            try:
+                q = json.loads(m.group(0))
+            except ValueError:
+                continue
+            if isinstance(q, dict) and q.get("ticker"):
+                quotes.append(q)
     return quotes
 
 
