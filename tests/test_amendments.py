@@ -47,7 +47,7 @@ class AmendmentTests(unittest.TestCase):
                 with redirect_stderr(stderr):
                     self.assertIsNone(preflight(p))
                 if content is None:
-                    self.assertEqual(stderr.getvalue(), '')
+                    self.assertIn('Warning.', stderr.getvalue())
                 else:
                     self.assertIn('Warning.', stderr.getvalue())
                 with self.assertRaises(GateError):

@@ -68,12 +68,18 @@ rel()  { case "$1" in "$KIT"/*) printf '%s' "${1#"$KIT"/}" ;; *) printf '%s' "$1
 # API key variables are removed so each tool uses its subscription login.
 
 call_claude() {
-  local tools="Read,Glob,Grep" args
+  local tools="Read,Glob,Grep" builtin_tools="Read,Glob,Grep" args policy
   case "${4:-}" in
-    ibkr|ibkr-bars) tools="$tools,mcp__$IBKR_SERVER" ;;
-    web) tools="$tools,WebSearch,WebFetch" ;;
+    ibkr|ibkr-bars)
+      tools=$("$PYTHON" "$KIT/lib/ibkr_readonly.py" --server "$IBKR_SERVER" --mode "$4" --allowlist) || return 1
+      policy=$("$PYTHON" "$KIT/lib/ibkr_readonly.py" --server "$IBKR_SERVER" --mode "$4" --policy) || return 1
+      ;;
+    web) tools="$tools,WebSearch,WebFetch"; builtin_tools="$tools" ;;
   esac
-  args=(-p "$(cat "$1")" --permission-mode dontAsk --allowedTools "$tools" --disallowedTools "Task,Agent,Bash,Write,Edit" --output-format text)
+  args=(-p "$(cat "$1")" --permission-mode dontAsk --tools "$builtin_tools" --allowedTools "$tools" --disallowedTools "Task,Agent,Bash,Write,Edit" --output-format text)
+  if [ -n "${policy:-}" ]; then
+    args+=(--setting-sources "" --settings "$policy")
+  fi
   if [ "${4:-}" = ibkr-bars ]; then
     args+=(--output-format stream-json --verbose)
   fi

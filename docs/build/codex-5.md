@@ -27,7 +27,7 @@ Stopped implementation after the full offline suite passed. Existing pre-phase-o
 | N7, catalyst currency inputs | The catalyst research schema now requests anchor_unit, price_unit and fx explicitly, so the existing conversion warning can receive the necessary fields. It still depends on the supplied research data being correct. |
 | N8, partition metadata | Coverage stores partition lists. Assembly and incremental updates retain earlier partitions instead of overwriting the source's previous scope. |
 | N9, excluded events | Publication rechecks exclusions, requires independently reconciled review metadata, and re-hashes their primary documents. Changes to reviewed evidence block publication, including evidence for excluded events. Included events also require review metadata. |
-| N10, housekeeping | Corrected codex-4.md's obsolete commit statement. Preserved the supplied nonempty review-4.md. Removed build-review summaries from research-standards.md and identified its actual instruction/specification sources. Earlier investor feedback is unavailable. No commit or staging was performed; new files, including review-4.md, remain working-tree additions. |
+| N10, housekeeping | Corrected codex-4.md's obsolete commit statement. Preserved the supplied nonempty review-4.md. Removed build-review summaries from research-standards.md and identified its actual instruction/specification sources. Earlier investor feedback is unavailable. Commit and tracking status are recorded by Git, not this historical handoff. |
 
 ## Amendments and commands
 

@@ -47,7 +47,25 @@ def prepare(collections, output):
     return snapshot
 
 
-def reconcile(prepared, reviews, output):
+def substantive(value):
+    """Compare assertions, keeping provenance differences in the audit record."""
+    if isinstance(value, list):
+        items = [substantive(v) for v in value]
+        return sorted(items, key=lambda v: json.dumps(v, sort_keys=True))
+    if not isinstance(value, dict):
+        return value
+    result = {}
+    for key, item in value.items():
+        if (key in {'source', 'locator', 'line_start', 'line_end', 'tagger', 'agreed',
+                    'review_observations', 'event_review'} or key.endswith(('_evidence', '_source', '_sources'))):
+            continue
+        if key in {'company', 'drug'} and isinstance(item, str):
+            item = ' '.join(__import__('re').findall(r'\w+', item.casefold()))
+        result[key] = substantive(item)
+    return result
+
+
+def reconcile(prepared, reviews, output, resolutions=None):
     require(len(reviews) == 2 and Path(reviews[0]).resolve() != Path(reviews[1]).resolve(),
             'Two independent review files are required.')
     source = json.loads(Path(prepared).read_text())
@@ -60,30 +78,59 @@ def reconcile(prepared, reviews, output):
         indexed = {r['candidate_id']: r for r in rows}
         require(set(indexed) == set(drafts), 'Each review must cover the complete candidate list.')
         results.append(indexed)
+    resolved = {}
+    if resolutions is not None:
+        with Path(resolutions).open(newline='') as f:
+            for row in csv.DictReader(f):
+                require(row['candidate_id'] not in resolved, 'Duplicate human resolution.')
+                require(row['candidate_id'] in drafts and row.get('reason', '').strip(),
+                        'Human resolution needs a known candidate and a reason.')
+                resolved[row['candidate_id']] = row
     agreed, disputes = [], []
     for key, original in drafts.items():
         a, b = (rows[key] for rows in results)
         ea, eb = json.loads(a['event_json']), json.loads(b['event_json'])
-        tags_a, tags_b = ea.pop('tags', []), eb.pop('tags', [])
-        clean_tags = lambda rows: [{k: v for k, v in t.items() if k not in ('tagger', 'agreed')} for t in rows]
-        if (a['decision'] != b['decision'] or ea != eb or a['decision'] not in ('include', 'exclude')
-                or ea.get('press_release_conflict') is not False or clean_tags(tags_a) != clean_tags(tags_b)):
+        for event in (ea, eb):
+            for field in IMMUTABLE:
+                if original.get(field) is not None:
+                    require(event.get(field) == original[field], 'Review changed a structured candidate field. ' + field)
+        decision = a['decision']
+        resolution = resolved.get(key)
+        if resolution:
+            ea = json.loads(resolution['event_json'])
+            decision = resolution['decision']
+            require(decision in ('include', 'exclude'), 'Human decision must include or exclude.')
+            for field in IMMUTABLE:
+                if original.get(field) is not None:
+                    require(ea.get(field) == original[field], 'Resolution changed a structured field. ' + field)
+            require(ea.get('press_release_conflict') is False,
+                    'Resolve the structured timing conflict before publishing.')
+            ea['event_resolution'] = dict(resolved_by='Ebrahim', reason=resolution['reason'],
+                source_file=str(Path(resolutions).resolve()),
+                feature_values={t['feature']: t['value'] for t in ea.get('tags', [])})
+            ea['tags'] = [dict(t, tagger='Ebrahim') for t in ea.get('tags', [])]
+        elif (decision != b['decision'] or substantive(ea) != substantive(eb)
+                or decision not in ('include', 'exclude')
+                or ea.get('press_release_conflict') is not False):
             disputes.append(dict(candidate_id=key, review_one=json.dumps(a), review_two=json.dumps(b)))
             continue
-        for field in IMMUTABLE:
-            if original.get(field) is not None:
-                require(ea.get(field) == original[field], 'Review changed a structured candidate field. ' + field)
-        ea['tags'] = [dict(t, tagger=model) for model, tags in (('claude', tags_a), ('codex', tags_b)) for t in tags]
+        else:
+            ea['tags'] = [dict(t, tagger=model) for model, event in (('claude', ea), ('codex', eb))
+                          for t in event.get('tags', [])]
+        # Keep both independent readings, including differing source ranges.
+        ea['review_observations'] = [dict(reviewer=model, decision=r['decision'],
+                                         reason=r['reason'], event=json.loads(r['event_json']))
+                                     for model, r in (('claude', a), ('codex', b))]
         from .engine import reconcile_tags
         ea = reconcile_tags(ea)
-        seal(ea, a['decision'], [str(Path(p).resolve()) for p in reviews])
+        seal(ea, decision, [str(Path(p).resolve()) for p in reviews])
         agreed.append(ea)
     output = Path(output); output.mkdir(parents=True, exist_ok=True)
     with (output / 'events.csv').open('w', newline='') as f:
         writer = csv.DictWriter(f, fieldnames=FIELDS); writer.writeheader()
         for e in agreed:
             writer.writerow(dict(candidate_id=e['candidate_id'], decision=e['event_review']['decision'],
-                                 event_json=json.dumps(e, sort_keys=True), reason='Both reviews agree'))
+                                 event_json=json.dumps(e, sort_keys=True), reason=e.get('event_resolution', {}).get('reason', 'Both reviews agree on substantive fields')))
     with (output / 'disagreements.csv').open('w', newline='') as f:
         writer = csv.DictWriter(f, fieldnames=['candidate_id', 'review_one', 'review_two'])
         writer.writeheader(); writer.writerows(disputes)
@@ -113,6 +160,9 @@ def primary_hashes(value):
 def seal(event, decision, reviewers):
     """Called only after reconciliation, hashing primary evidence at review time."""
     source_excerpt(event['review_evidence'])
+    for observation in event.get('review_observations', []):
+        if observation['decision'] != 'unresolved' or observation['event'].get('review_evidence'):
+            source_excerpt(observation['event']['review_evidence'])
     event['event_review'] = dict(decision=decision, reviewers=reviewers,
         primary_hashes=primary_hashes(event),
         digest=hashlib.sha256(json.dumps(event, sort_keys=True).encode()).hexdigest())

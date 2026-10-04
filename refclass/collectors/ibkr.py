@@ -31,6 +31,8 @@ def collect(path, *, tickers, since, until):
             raw = json.loads(line)
             if json.dumps(raw, sort_keys=True) not in parsed:
                 raise ValueError('Not a quote object recognised by the kit price reader.')
+            if raw.get('error'):
+                raise ValueError(raw['error'])
             if raw['ticker'] not in wanted:
                 continue
             day = date.fromisoformat(raw['date'])

@@ -142,7 +142,11 @@ def reconcile_tags(event):
         valid = all(tag.get("tagger") and tag.get("locator") for tag in observations)
         values = {json.dumps(tag["value"], sort_keys=True) for tag in observations}
         readers = {tag.get("tagger") for tag in observations}
-        match = valid and len(readers) >= 2 and len(values) == 1
+        resolution = event.get('event_resolution', {})
+        human_value = resolution.get('feature_values', {}).get(feature)
+        human = resolution.get('resolved_by') == 'Ebrahim' and human_value is not None
+        match = valid and len(values) == 1 and (len(readers) >= 2 or
+                (human and observations[0]['value'] == human_value))
         for tag in observations:
             tag["agreed"] = match
         if match:
@@ -229,14 +233,20 @@ def build(db, snapshot, knowledge, update=False):
         for event in events:
             if not snapshot.get("fixture"):
                 event = reconcile_tags(event)
-            for key in ("event_id", "company", "ticker", "event_type", "announced_at", "source", "locator"):
+            reviewed_exclusion = event.get('event_review', {}).get('decision') == 'exclude'
+            if reviewed_exclusion and not snapshot.get('fixture'):
+                from .review import verify_event_review
+                verify_event_review(event)
+            required = ('event_id', 'company', 'source', 'locator') if reviewed_exclusion else (
+                'event_id', 'company', 'ticker', 'event_type', 'announced_at', 'source', 'locator')
+            for key in required:
                 if not event.get(key):
                     raise ValueError(f"Event is missing {key}")
             if event["event_id"] in seen:
                 raise ValueError("Duplicate event_id in snapshot")
             seen.add(event["event_id"])
             excluded = ('Excluded by independent reviews' if event.get('event_review', {}).get('decision') == 'exclude' else None) or exclusion(event, as_of)
-            cap = market_value(event, prices, sessions)
+            cap = None if reviewed_exclusion else market_value(event, prices, sessions)
             if not snapshot.get("fixture"):
                 excluded = excluded or eligibility_gap(event)
                 if not shares_verified(event):
@@ -269,7 +279,7 @@ def build(db, snapshot, knowledge, update=False):
                                [(c["candidate_id"], json.dumps(c)) for c in snapshot.get("candidates", [])])
         for event, excluded, cap, r in prepared:
             connection.execute("INSERT INTO events VALUES (?,?,?,?,?,?,?,?,?,?,?,?)",
-                               (*[event.get(k) for k in ("event_id", "company", "ticker", "drug", "application", "event_type",
+                               (*[(event.get(k) or '') if k == 'ticker' else event.get(k) for k in ("event_id", "company", "ticker", "drug", "application", "event_type",
                                                          "announced_at", "goal_date", "source")], json.dumps(event), excluded, cap))
             connection.execute("INSERT INTO reactions VALUES (?,?)", (event["event_id"], json.dumps(r)))
             for tag in event.get("tags", []):

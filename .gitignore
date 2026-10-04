@@ -26,3 +26,5 @@ data/refclass*.sqlite*
 
 !/knowledge/INDEX.md
 !/knowledge/research-standards.md
+
+.manifest.lock

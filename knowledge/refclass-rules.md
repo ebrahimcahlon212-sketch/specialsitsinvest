@@ -1,6 +1,6 @@
 # Reference class rules, version 2
 
-Fixed on 4 October 2026, before any results were seen. Any change creates version 2, and every output records the version it used.
+Fixed on 4 October 2026, before any results were seen. Any subsequent rule change increments the version, and every output records the version it used.
 
 ## Events
 An event is an FDA approval, complete response letter, refusal to file, review extension or accepted resubmission for an NDA or original BLA. Supplements and abbreviated applications, such as generics and biosimilars, are excluded. The window runs from 1 January 2015 to the build date. The sponsor, or a partner with disclosed US economics, must be listed on a US exchange at the event date.

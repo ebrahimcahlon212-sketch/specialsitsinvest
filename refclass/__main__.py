@@ -49,15 +49,16 @@ def main(argv=None):
     profile.add_argument('name')
     profile.add_argument('--input', type=Path, required=True)
     acceptance = sub.add_parser('acceptance', help='Verify live phase-one criteria for Savara')
-    acceptance.add_argument('--db', type=Path, default=root / 'data/refclass.sqlite')
+    acceptance.add_argument('--db', type=Path, default=Path(os.environ.get('REFCLASS_DB', root / 'data/refclass.sqlite')))
     acceptance.add_argument('--targets', type=Path, required=True)
     prepare = sub.add_parser('prepare-review', help='Assemble candidates and independent review prompts')
     prepare.add_argument('--collection', type=Path, action='append', required=True)
     prepare.add_argument('--output', type=Path, required=True)
     review = sub.add_parser('review', help='Reconcile two saved independent model CSV reviews')
-    review.add_argument('--prepared', type=Path, required=True)
-    review.add_argument('--reviews', type=Path, nargs=2, required=True)
-    review.add_argument('--output', type=Path, required=True)
+    review.add_argument('--prepared', type=Path)
+    review.add_argument('--reviews', type=Path, nargs=2)
+    review.add_argument('--output', type=Path)
+    review.add_argument('--resolve', type=Path, help='Ebrahim CSV decisions, preserving both original model reviews')
     args = parser.parse_args(argv)
     try:
         if args.command == 'profile':
@@ -81,7 +82,20 @@ def main(argv=None):
             return 0
         if args.command == 'review':
             from .review import reconcile
-            count = reconcile(args.prepared, args.reviews, args.output)
+            if not any((args.prepared, args.reviews, args.output, args.resolve)):
+                import csv
+                count = 0
+                for path in sorted((root / 'data/refclass').rglob('disagreements.csv')):
+                    with path.open(newline='') as f:
+                        for row in csv.DictReader(f):
+                            print(f"{row['candidate_id']} [{path}]")
+                            count += 1
+                if not count:
+                    print('No saved disagreements under data/refclass.')
+                return 0
+            if not all((args.prepared, args.reviews, args.output)):
+                raise ValueError('Reconciliation needs --prepared, --reviews and --output.')
+            count = reconcile(args.prepared, args.reviews, args.output, args.resolve)
             print(f'{count} disagreements for Ebrahim. See {args.output / "disagreements.csv"}')
             return 1 if count else 0
         if args.command == "collect":

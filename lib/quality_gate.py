@@ -11,14 +11,14 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from refclass.quality import GateError, validate
 
 
-def preflight(directory, evidence_path=None, *, strict=False):
+def preflight(directory, evidence_path=None, *, strict=False, publication_text=None):
     path = Path(evidence_path) if evidence_path and Path(evidence_path).exists() else Path(directory) / "quality.json"
     try:
-        if not path.exists() and not strict:
-            return None  # Evidence is not produced by legacy research steps.
         if not path.exists():
             raise GateError(f"Quality gate evidence missing. {path}")
-        return validate(json.loads(path.read_text()), deal_root=Path(directory).resolve().parent)
+        evidence = json.loads(path.read_text())
+        return validate(evidence, deal_root=Path(directory).resolve().parent,
+                        publication_text=publication_text)
     except (ValueError, TypeError, KeyError, OSError, AttributeError) as exc:
         if strict:
             raise GateError(f"Quality gate stopped publication. {exc}") from exc

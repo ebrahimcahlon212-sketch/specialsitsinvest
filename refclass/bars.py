@@ -20,11 +20,26 @@ def request(tickers, since, until):
     return dict(tickers=symbols, since=since, until=until)
 
 
-def transcript_bars(path, server):
-    """Only tool results, never assistant text, can become broker bar inputs.
+def capability_gaps(query, today=None):
+    today = today or date.today()
+    try:
+        earliest = today.replace(year=today.year - 5)
+    except ValueError:
+        earliest = today.replace(year=today.year - 5, day=28)
+    gaps = []
+    if date.fromisoformat(query['since']) < earliest:
+        gaps.append(f"Configured get_price_history is limited to FIVE_YEARS back from {today}; "
+                    f"requested history before {earliest} is unavailable, with no end-date pagination.")
+    if date.fromisoformat(query['until']) > today:
+        gaps.append('Requested future bars are unavailable.')
+    return gaps
 
-    Require explicit broker price conventions. Unsupported live schemas are gaps,
-    not permission to invent split factors. Original tool payloads are retained.
+
+def transcript_bars(path, server):
+    """Save original tool responses, including unsupported bars as explicit gaps.
+
+    Plain OHLCV is never silently relabelled split-adjusted. The transport is
+    retained even when the provider cannot supply the required price convention.
     """
     calls, rows = {}, []
     for number, line in enumerate(Path(path).read_text().splitlines(), 1):
@@ -34,25 +49,35 @@ def transcript_bars(path, server):
                 continue
             if block.get('type') == 'tool_use':
                 name = block.get('name', '')
-                if name.startswith('mcp__' + server + '__') and re.search(r'histor|daily.*bar', name, re.I) and not re.search(r'order|cancel|trade', name, re.I):
-                    calls[block['id']] = name
-            if block.get('type') != 'tool_result' or block.get('tool_use_id') not in calls or block.get('is_error'):
+                if name in {f'mcp__{server}__get_price_history', f'mcp__{server}__historical_bars'}:
+                    calls[block['id']] = dict(name=name, input=block.get('input', {}))
+            if block.get('type') != 'tool_result' or block.get('tool_use_id') not in calls:
                 continue
+            call = calls[block['tool_use_id']]
             content = block.get('content')
             if isinstance(content, list):
                 content = ''.join(c.get('text', '') for c in content if c.get('type') == 'text')
-            payload = json.loads(content) if isinstance(content, str) else content
-            if not isinstance(payload, dict) or not isinstance(payload.get('bars'), list):
-                raise ValueError('Unsupported historical broker response schema. Preserve transcript for mapping review.')
+            try:
+                payload = json.loads(content) if isinstance(content, str) else content
+            except ValueError:
+                payload = content
+            origin = dict(provider='IBKR', broker_response=payload, broker_tool=call['name'],
+                          broker_input=call['input'], transcript=str(Path(path).resolve()),
+                          transcript_line=number, tool_use_id=block['tool_use_id'])
+            if block.get('is_error') or not isinstance(payload, dict) or not isinstance(payload.get('bars'), list):
+                rows.append(dict(origin, error='Historical tool error or unsupported payload. Original response retained; no verified split-only bars.'))
+                continue
             for index, native in enumerate(payload['bars']):
+                if not isinstance(native, dict):
+                    rows.append(dict(origin, error='Unsupported daily bar. Original response retained.'))
+                    continue
                 bar = {key: native.get(key, payload.get(key)) for key in
                        ('ticker', 'date', 'close', 'adjusted_close', 'adjustment')}
                 if any(v is None for v in bar.values()) or bar['adjustment'] != 'split_only':
-                    raise ValueError('Broker did not explicitly supply both close conventions. Mapping review required.')
-                bar.update(provider='IBKR', broker_response=payload, broker_index=index,
-                           broker_tool=calls[block['tool_use_id']], transcript=str(Path(path).resolve()),
-                           transcript_line=number, tool_use_id=block['tool_use_id'])
-                rows.append(bar)
+                    rows.append(dict(origin, broker_index=index,
+                        error='Plain OHLCV or missing close convention. Split-only adjusted and as-traded closes are not established.'))
+                    break  # One gap per payload; the complete original payload is retained.
+                rows.append(dict(bar, **origin, broker_index=index))
     if not rows:
         raise ValueError('No historical IBKR tool results. Assistant-generated bars are not primary evidence.')
     return rows
@@ -77,16 +102,15 @@ def main():
         if args.prepare:
             prompt = folder / (key + '.request.md')
             prompt.write_text(
-                'Use only the existing IBKR connection, read-only historical market data tools. Never call '
-                'order, cancellation or account mutation tools. Fetch regular-session daily historical bars for '
-                + json.dumps(query) + '. Include XBI. Preserve the broker session dates. '
-                'Return one JSON object per daily bar with provider="IBKR", ticker, date (YYYY-MM-DD), '
-                'close (unadjusted), adjusted_close (split-only), adjustment="split_only", and '
-                'broker_contract identifying the returned contract. Never use dividend-adjusted closes. '
-                'Do not invent adjustment factors, dates or missing bars. If the tool cannot provide both '
-                'price conventions, return an error object with ticker and reason instead. '
-                'Copy numbers exactly from the response. Do not use current quotes, reports or the web. '
-                'Put JSON lines between <<<BEGIN OUTPUT>>> and <<<END OUTPUT>>>.\n')
+                'Use the existing IBKR read-only connection to resolve tickers to contract IDs, then call '
+                'get_price_history with each contract ID, period FIVE_YEARS and daily bars. '
+                'The period is counted back from today. There is no end-date parameter; never invent one '
+                'or attempt historical pagination. Requested tickers and dates: ' + json.dumps(query) + '. '
+                'Include XBI. Tool responses are captured directly; do not transform OHLCV into adjusted_close, '
+                'invent split factors or claim that plain closes have a verified adjustment convention. '
+                'Unsupported history, symbols and adjustments will remain explicit unpriced gaps. '
+                'Do not use current quotes, reports or the web as historical prices.\n' +
+                '\n'.join(capability_gaps(query)) + '\n')
             print(prompt); print(output)
             return 0
         if args.saved is None and args.transcript is None:
@@ -105,6 +129,9 @@ def main():
                     raise ValueError('Existing raw download differs. Preserve it and use a new download date.')
                 output.write_text(lines)
             result = collect(output, **query)
+            result['gaps'].extend(capability_gaps(query))
+            result['complete'] = not result['gaps']
+            result['gap_count'] = len(result['gaps']) + len(result['coverage_gaps'])
             (folder / (key + '.collection.json')).write_text(json.dumps(result, indent=2) + '\n')
         print(f'Saved {output}. Bar gaps {len(result["gaps"])}.')
         return 1 if result['gaps'] else 0

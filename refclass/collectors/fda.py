@@ -72,6 +72,13 @@ def collect(client, source, *, since='2015-01-01', until=None, page_size=10, max
         raise CollectionError('Start date must not follow end date.')
     if not 1 <= page_size <= 1000 or max_pages < 1:
         raise CollectionError('Invalid FDA page bounds.')
+    # Permit a redundant exact window for replay of historic sample requests,
+    # but never let an extra search contradict the recorded collection scope.
+    field = 'submissions.submission_status_date' if source == 'drugs_at_fda' else 'letter_date'
+    window = f"{field}:[{since.replace('-', '')} TO {until.replace('-', '')}]"
+    extra = (search or '').replace(window, '')
+    if re.search(r'(?:date|time)\s*:|\[|\]|\bTO\b|\d{8}|\d{4}-\d{2}-\d{2}', extra, re.I):
+        raise CollectionError('FDA date filters conflict with --since/--until; use one exact window.')
     parser = approvals if source == 'drugs_at_fda' else letters
     output = dict(source=source, candidates=[], gaps=[], responses=[], excluded=0, complete=False)
     seen = set()

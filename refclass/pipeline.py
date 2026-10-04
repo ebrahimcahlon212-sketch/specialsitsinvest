@@ -11,7 +11,7 @@ def assemble(snapshot, paths):
     snapshot = dict(snapshot)
     snapshot["prices"] = list(snapshot.get("prices", []))
     events = {e['event_id']: e for e in snapshot.get('events', [])}
-    candidates = {}
+    candidates = {c['candidate_id']: c for c in snapshot.get('candidates', [])}
     gaps = list(snapshot.get('gaps', []))
     coverage = dict(snapshot.get('coverage', {}))
     for path in paths:

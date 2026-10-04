@@ -1,86 +1,70 @@
 # Phase 1 event prices
 
-This implementation imports sourced local JSON snapshots and computes event windows, raw returns and XBI abnormal returns in SQLite. It does not yet collect a historical census from FDA, openFDA, EDGAR or IBKR. Nothing calls an order endpoint. All tests run offline with Python's standard library.
+Read [the amendments](spec-amendments.md) with [the system specification](system-spec.md). The [manual](manual.md) describes collection, `fetch-bars`, independent review, human resolution, profiles and acceptance. The implementation has offline tests, but phase 1 still needs Ebrahim's live acceptance run.
 
-```
+FDA approval and CRL collectors use openFDA. EDGAR collection saves submissions inventories, 8-Ks and bounded exhibits. Real saved response fixtures test these collectors. No full historical census is supplied. Missing CBER and unpublished-CRL coverage remain explicit gaps.
+
+The IBKR command saves actual tool transcripts. The configured `get_price_history` is limited to five years back from today and returns OHLCV without explicit as-traded and split-only conventions. Unsupported responses are retained as gaps. No code invents adjustment factors or an end-date parameter. The canonical offline bar fixture is artificial, and is not proof that the live tool can supply canonical bars.
+
+```sh
 python3 -m unittest discover -v
 ./run.sh refclass build --input /path/to/snapshot.json
 ./run.sh refclass update --input /path/to/increment.json
 ./run.sh refclass show savara
 ./run.sh refclass show savara --json
+./run.sh refclass review
 ./run.sh refclass gates /path/to/quality.json
 ```
 
-`--db FILE` overrides `data/refclass.sqlite` for every database command. `REFCLASS_DB` also sets the default. The default input is `data/refclass-input.json`. Missing source files produce a nonzero status and, if no database exists, an empty database with counted source gaps. They never erase an existing database. Builds with source gaps also return nonzero, after recording and printing those gaps. No fixture is loaded into the production database automatically.
+`--db FILE` overrides `data/refclass.sqlite` for database commands. `REFCLASS_DB` also sets the default. The default snapshot is `data/refclass-input.json`. Missing sources return a nonzero status and never erase an existing database. Builds with source gaps record and print them. No fixture is loaded into production automatically.
 
-`build` replaces the imported dataset in one transaction. `update` merges by event ID and by ticker/date, preserving events with no prices, including acquired and delisted companies. Use a full rebuild to clear previously recorded gaps after resolving them. Rules and feature files carry their own versions and SHA-256 fingerprints. Changed files require a rebuild; a new version number requires updating the implementation and tests first.
+`build` replaces the dataset in one transaction. `update` merges by event ID and ticker/date, preserving acquired, delisted and unpriced events. Rebuild to clear resolved historical gaps. Rules and feature versions and SHA-256 fingerprints are recorded. Changed convention files require a rebuild.
 
-Snapshot format
+## Snapshot format
 
-| Field | Required contents |
+| Field | Contents |
 |---|---|
 | `as_of` | ISO build date |
-| `fixture` | `true` only for test data; permanently propagated by incremental updates |
-| `coverage` | Descriptions of coverage for `drugs_at_fda`, `openfda_crl`, `edgar`, `ibkr`; this records supplied coverage, not independently verified completeness |
-| `gaps` | Explicit list of failed downloads, parse failures or incomplete coverage |
-| `events` | Event objects described below |
-| `prices` | `ticker`, `date`, unadjusted `close`, split-adjusted `adjusted_close`, `source` |
-| `sessions` | Every exchange session in each priced window, with ISO `date` and Eastern `open`/`close` times; include early closes, omit actual holidays |
+| `fixture` | True only for test data, propagated by updates |
+| `coverage` | Partition lists with `path`, `complete`, `scope`, for FDA, CRL, EDGAR and IBKR |
+| `gaps` | Failed downloads, parse failures and coverage limitations |
+| `candidates` | Code-assembled candidates, retained even when not reviewed |
+| `events` | Independently reviewed inclusions and exclusions |
+| `prices` | Ticker, session date, unadjusted `close`, split-only `adjusted_close`, primary `source#Lnumber` |
+| `sessions` | Every exchange session in priced windows, with date and Eastern open/close, including early closes |
 
-An event has `event_id`, `company`, `ticker`, `drug`, `application` (`NDA` or `BLA`), boolean `original`, boolean `listed_us` at the event, `event_type`, `announced_at`, optional `goal_date`, `source` and `locator`. Use a timezone-aware ISO announcement timestamp, or just the date when its time is unknown. Date-only announcements are flagged and assume after-close timing. Session selection is independent of available company bars. A missing bar stays missing and does not shift the window.
+Included events need company, ticker, drug, application, original-application status, historical listing, structured action and announcement evidence, source locators and review metadata. Source line evidence uses `source`, `line_start` and `line_end` for physical one-based text lines. A range must contain fewer than fifty lines. JSON pointers identify structured FDA dates and SEC 8-K acceptance timestamps. Prose can flag a contradiction, not establish those dates.
 
-Supply the company's USD-denominated unadjusted pre-news close and contemporaneous common `shares`, `shares_as_of` and `shares_source` for market value. Production imports require the source evidence described below. Supplied coverage still needs independent review. Missing share evidence prevents entry into class C. Returns use split-adjusted prices while market value uses unadjusted prices to match the share count.
+Reviewed exclusions require identity, company, primary evidence and a sealed review. They do not require a ticker or an announcement timestamp. Both inclusions and exclusions are rechecked against primary-file hashes before publication.
 
-Each tag observation contains `feature`, `value`, `tagger`, and `locator`. For nonfixture imports, `first_product` and `same_day_news` require matching `yes`/`no` observations from at least two distinct taggers. The importer recomputes agreement rather than trusting an `agreed` flag. Missing or disputed first-product tags prevent entry into B and C. Only explicitly agreed no-news observations enter the sample without same-day takeover/financing. This is an import boundary for independent extractions; it does not run the two taggers or provide the phase 2 review workflow.
+Independent tag values are compared by feature, without requiring equal line ranges or tag order. Drug-name case, spacing and punctuation do not create disagreements. Different substantive assertions remain pending. Ebrahim's explicit resolution keeps both model readings, its reason and the selected tags. It cannot change structured candidate identities or FDA dates. The manual gives the resolution CSV command.
 
-Optional `offering_dates` must be announcement dates, not pricing or completion dates. `offering_coverage_through` establishes the extent of the source search. Five trading days means day one through the fifth session inclusive. No offering is reported only when all five sessions and source coverage exist; otherwise the result is unknown.
+Session selection is independent of bar availability. Date-only announcement inputs are flagged and assume after-close timing in the calculation engine, but strict publication still requires the structured SEC evidence required by amendment 8. A missing bar cannot move the event window.
 
-Outputs show A, B and C, with each event type separate, priced and unpriced counts, medians and linearly interpolated quartiles, plus results without same-day news. Samples below ten events are marked thin. Counts of missing first-product status and market value explain omissions from narrower classes. Event windows list the input prices and sources. Rates, likelihood ratios, backtests, ledgers and Excel models are not phase 1 outputs. A phase 2 backtest remains a prerequisite for live use.
+Market value uses an unadjusted pre-news close and contemporaneous common shares. `share_filings` must identify saved filing evidence, filing date, as-of date and share count. Saved SEC inventories support the check for the latest filing before the event. Applicant, listing and any partner-economics evidence must be supplied. A missing market value prevents entry into class C.
 
-Quality gates and publication
+Returns use split-adjusted stock and XBI closes on the same sessions. Reactions retain unadjusted closes separately. Acceptance compares these as-traded prices to the report's prices, then checks the report's day-one and day-two split-adjusted returns. No assumption is made that a later split leaves as-traded prices equal to adjusted prices.
 
-Publication requires evidence by default. `QUALITY_GATES=legacy` is an explicit compatibility opt-out, emits an unverified warning when evidence is absent, and is not suitable for a verified output. A supplied invalid evidence file always blocks publication.
+Optional offering dates are announcement dates. The five-session window starts at day one. No offering is reported only when all five sessions and source coverage are supplied, otherwise the result is unknown.
 
-Research steps such as mapping, drafts, review and terms extraction can run without pre-existing evidence. `run_step` asks the model to return evidence between `<<<BEGIN QUALITY>>>` and `<<<END QUALITY>>>`, outside its OUTPUT block. Python validates this JSON before saving it beside the artifact as `ARTIFACT.quality.json`. Published prose is checked before replacement. The calculator reads the terms artifact's evidence sidecar, with `out/quality.json` retained as a compatibility input. Other renderers still require their directory's `quality.json`; generating evidence automatically for all those legacy data paths remains open.
+Outputs show nested classes A, B and C with priced, unpriced and unknown-feature counts, medians and interpolated quartiles. Approvals and CRLs remain separate. Results also exclude same-day takeover/financing in a sensitivity view. Rates, likelihood ratios, backtests and workbooks belong to later phases.
 
-| Section | Inputs |
-|---|---|
-| `units` | `nav`, `nav_unit`, `price`, `price_unit` |
-| `staleness` | `cash_as_of`, `shares_as_of`, `latest_10q_period` |
-| `listing` | `ticker`, `as_of`, `checked_through`, `filings` with `date` and `items`, optional `venue` and `suffix_review` |
-| `attribution` | `company`, `applicant`, optional `economics_source` object with `source` and `locator` |
-| `date_type` | `kind`, ISO `value`, and saved primary-source `evidence` |
-| `arithmetic` | List of `kind`, `inputs`, `reported` computations |
-| `partial_tender` | `price`, `tender_price`, `entitlement`, `residual_price`, `headline_return` |
+## Publication checks
 
-Every section must be present. An inapplicable section is `{"not_applicable": "specific reason"}`. Code cannot establish that a model has included every metric or correctly declared a section inapplicable. Source completeness and prose-to-evidence reconciliation remain review responsibilities.
+Research steps never receive evidence instructions and never run gates. Existing publication commands warn without blocking, including when evidence is absent. The old `QUALITY_GATES` environment variable cannot make legacy commands strict. New publication paths fail closed.
 
-Source evidence contains `source` (a local text path), `line_start` and `line_end` (physical, one-based lines). The gate rereads fewer than fifty lines. These are file line offsets, not necessarily the line tags used in research citations. The date gate checks the sentence containing the specified ISO date or English month-name date for FDA action or goal wording. Ambiguous, inferred or unsupported dates fail. This deliberately conservative text check can reject valid disclosures with different phrasing; it is not a general document interpreter.
+Strict reference-class publication recomputes the actual reactions and class summaries, rereads primary bars and event evidence, and checks review seals. It accepts primary files only from deal `filings/` or `work/`, or `data/refclass/raw/`, with symlink escape checks. Keep model outputs outside raw.
 
-The listing suffix check applies to fifth-letter Q tickers on OTC venues, or with unknown venue. It does not flag NDAQ. A `suffix_review` requires source evidence and a reason. An Item 1.03 finding remains blocking even when a suffix review exists.
+General structured quality evidence requires units, staleness, listing, attribution, date type, arithmetic and partial-tender sections. Explicit N/A reasons are allowed except for arithmetic. The supported computations are runway, return, abnormal return, annualized return, expected value, whole-holding return and discount. Runway includes both short- and long-term securities. Annualization uses simple return times 365 divided by the calendar-day count.
 
-Arithmetic kinds are `runway`, `return`, `abnormal_return`, `annualized_return`, `expected_value`, `whole_holding` and `discount`. Returns are fractions. Percentage results tolerate half of the last displayed digit for percentages quoted to two decimal places, or 0.00005 in fractional units, plus floating-point slack. Currency values and runway retain 0.005 tolerance. Annualized returns use simple return times 365 divided by a positive calendar-day count. Runway includes cash and both short-term and long-term securities. FX inputs must be explicit.
+Strict prose extraction additionally scans the actual output for every numeric token. `numeric_claims` binds each token by zero-based character offsets to primary line evidence or a checked arithmetic entry. Calculation inputs need primary evidence keyed by their input paths. Extra claims, missing bindings, mismatches and unsupported inputs stop publication before replacing an existing report. This establishes numeric coverage, not the semantic correctness of a source interpretation or the completeness of a search. Legacy extraction only warns; research extraction remains exempt.
 
-A partial-tender expected headline requires `expected_entitlement`. Residual value comes from `expected_residual_price` or a single supplied `back_end_prices` scenario. Missing assumptions produce a warning and no expected headline. Participation rows remain scenarios, and are not silently promoted to expectations.
+FX rates and source units must be explicit. Catalyst research keeps the anchor in its original source unit. Legacy rendered numbers retain their compatibility contract and warn when the converted comparison differs.
 
-Job execution
+## Execution and remaining acceptance
 
-Deal job locks use the deal and command identity. A duplicate of that job is refused; a different deal or command can proceed. Help, viewing, questions, knowledge and ledger commands are not blocked by the deal job lock. Database imports also hold a database-specific write lock. Shared legacy stores do not gain transaction safety merely because unrelated jobs can now proceed.
+Build, update and collect normally launch jobs with logs under `~/special-sits-kit-logs/`. Add `--foreground` for synchronous execution. A lock prevents a second copy of the same job. Shared legacy stores do not gain transaction safety from separate job locks.
 
-`./run.sh refclass build` and `update` launch detached jobs with logs under `~/special-sits-kit-logs/`. The launcher acquires a database-specific job lock before spawning and passes its file descriptor to the worker. The log records completion status. Launch success means the worker started, not that the import succeeded. For a synchronous import use `./run.sh refclass build --foreground --input FILE`, or `python3 -m refclass build --input FILE`. No live background process was started in the review-fix session; launcher regression tests mock process creation.
+Acceptance requires reviewed census candidates, continuous unfiltered FDA collection windows, EDGAR coverage, genuine prices for the four comparables, a sourced Savara profile and the required published-number traces. IBKR gaps elsewhere remain counted unpriced, as the specification requires. The test does not independently discover omitted sponsors or authenticate forged local files.
 
-Deal profiles
-
-`deals/NAME/refclass.json` supplies `first_product`, USD `market_value`, `source`, `locator` and ISO `as_of`. Reporting selects the deepest applicable fixed class for that profile and keeps the global nested classes visible for context. A missing profile is explicitly reported as a gap and no deal-specific class is selected. This profile remains a sourced analyst input, not an automatically verified ledger row.
-
-Production provenance
-
-Nonfixture events now need `listing_evidence`, `applicant` and `applicant_evidence`. The listing evidence includes its source line range, `venue`, `valid_from` and `valid_through`. The source must contain the ticker and exchange, and the supplied validity interval must cover the event. Applicant evidence must contain the applicant and drug. A different applicant requires `economics_evidence` naming the company, applicant and drug with economics wording. Missing or unreadable evidence excludes the event with a printed reason.
-
-For class C, `share_filings` lists saved filing evidence with `source`, line range, ISO `filed_at`, ISO `as_of` and `shares`. The engine selects the latest supplied filing before the event, reconciles it to the event's share fields, and rereads the count from its outstanding-shares passage. Missing or inconsistent evidence leaves market value unknown. The filing inventory's completeness, listing validity interval and interpretation of partner economics still need human verification. Text matching does not prove a complete SEC search.
-
-Known synthetic or fixture-labelled price sources cannot be imported with `fixture=false`. This prevents accidental reuse of the bundled fake XBI series, but a source label alone is not authentication of a price feed.
-
-Remaining prerequisites
-
-The FDA/openFDA/EDGAR collectors and historical census remain unimplemented. Real split-adjusted IBKR and XBI bar acquisition, primary announcement timestamps and complete exchange-session calendars are still needed. The Savara report fixtures test arithmetic only; they are not the independent, broker-sourced acceptance test required by the system spec. No production data or deal profiles were fabricated to make acceptance pass. Phase 1 remains unaccepted.
+This checkout lacks the live bars, complete census, Savara source documents and verified report targets needed for acceptance. The broker's price conventions and history limits require resolution with actual primary support, not a relabelled synthetic sample. No phase 2 work is authorized by passing the offline suite.

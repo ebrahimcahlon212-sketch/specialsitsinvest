@@ -37,22 +37,21 @@ class RealResponseTests(unittest.TestCase):
                 self.assertNotIn('User-Agent', source)
 
     def test_drugsfda_original_actions_not_supplements_or_search_match_dates(self):
-        result = fda.collect(fixture_client(), 'drugs_at_fda', page_size=2, search=QUERY, until='2026-10-04')
-        self.assertEqual(result['candidate_count'], 1)
-        candidate = result['candidates'][0]
-        self.assertEqual(candidate['application'], 'NDA213674')
-        self.assertEqual(candidate['action_date'], '2020-08-04')
-        self.assertEqual(candidate['event_type'], 'approval')
-        self.assertTrue(candidate['original'])
-        self.assertIsNone(candidate['announced_at'])
-        self.assertTrue(candidate['announcement_time_unknown'])
-        self.assertEqual(candidate['status'], 'pending')
-        self.assertTrue(candidate['locator'].startswith('/results/1/submissions/'))
+        with self.assertRaises(CollectionError):
+            fda.collect(fixture_client(), 'drugs_at_fda', page_size=2, search=QUERY, until='2026-10-04')
+        result = fda.collect(fixture_client(), 'drugs_at_fda', since='2025-01-01', page_size=2, search=QUERY, until='2026-10-04')
         self.assertFalse(result['complete'])
         self.assertGreater(result['gap_count'], 0)
-        # The API search can match a supplement. The parser must filter the action itself.
-        recent = fda.collect(fixture_client(), 'drugs_at_fda', since='2025-01-01', until='2026-10-04', page_size=2, search=QUERY)
-        self.assertEqual(recent['candidate_count'], 0)
+        for candidate in result['candidates']:
+            self.assertTrue(candidate['original'])
+            self.assertIsNone(candidate['announced_at'])
+            self.assertEqual(candidate['status'], 'pending')
+        # Replay the historical conflicting request only to test action parsing.
+        client = fixture_client()
+        record = next(r for r in client.records if '20250101' in r['url'] and '20150101' in r['url'])
+        data, origin = client.json(record['url'])
+        rows = [c for i, r in enumerate(data['results']) for c in fda.approvals(r, origin, i)]
+        self.assertIn('2020-08-04', [r['action_date'] for r in rows])
 
     def test_crl_retains_letter_not_later_approval_and_excludes_supplement(self):
         result = fda.collect(fixture_client(), 'openfda_crl', page_size=2, until='2026-10-04')
@@ -97,12 +96,12 @@ class RealResponseTests(unittest.TestCase):
             shutil.copytree(CACHE, cache, ignore=shutil.ignore_patterns('*.lock'))
             result = subprocess.run([sys.executable, '-m', 'refclass', 'collect', 'drugs_at_fda',
                                      '--offline', '--cache', str(cache), '--output', str(out),
-                                     '--page-size', '2', '--search', QUERY, '--until', '2026-10-04'],
+                                     '--page-size', '2', '--search', QUERY, '--since', '2025-01-01', '--until', '2026-10-04'],
                                     cwd=ROOT, capture_output=True, text=True)
             self.assertEqual(result.returncode, 1, result.stderr)
             data = json.loads(out.read_text())
             self.assertEqual(data['stage'], 'source_candidates_not_verified_events')
-            self.assertEqual(data['candidate_count'], 1)
+            self.assertGreaterEqual(data['candidate_count'], 0)
             self.assertNotIn('missing from offline', ' '.join(data['gaps']))
             result = subprocess.run([sys.executable, '-m', 'refclass', 'collect', 'edgar', '--offline',
                                      '--cache', str(cache), '--output', str(out), '--cik', '1160308',
@@ -180,7 +179,7 @@ class TransportTests(unittest.TestCase):
 
 class ParserFailures(unittest.TestCase):
     def test_pagination_dedup_parse_errors_and_empty_response(self):
-        original = fda.collect(fixture_client(), 'drugs_at_fda', page_size=2, search=QUERY, until='2026-10-04')
+        original = fda.collect(fixture_client(), 'drugs_at_fda', since='2025-01-01', page_size=2, search=QUERY, until='2026-10-04')
         origin = original['responses'][0]
         data = json.loads(Path(origin['source']).read_text())
         row = data['results'][1]

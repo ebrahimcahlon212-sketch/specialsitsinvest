@@ -267,7 +267,53 @@ This is general, not tax advice, so check anything that matters with HMRC's guid
 
 ## Numbers and prices
 
-The phase 1 event-price importer and quality-gate compatibility options are documented in [refclass-phase1.md](refclass-phase1.md). It imports local snapshots, and its offline tests use the Savara comparable prices. Live source collection and mandatory evidence for all legacy outputs remain unfinished.
+The phase 1 workflow is described in [refclass-phase1.md](refclass-phase1.md), subject to [the spec amendments](spec-amendments.md). FDA and EDGAR collectors have saved-response tests. Ebrahim runs live collection and acceptance. Offline test results are not phase 1 acceptance.
+
+Live downloads are saved under `data/refclass/raw/<source>/<download-date>/`. Strict source checks can read this directory and deal `filings/` and `work/` folders. Keep model reviews and outputs outside raw. Collection JSON files describe coverage and gaps but are not themselves primary evidence.
+
+```sh
+./run.sh refclass collect drugs_at_fda --since 2015-01-01 --until YYYY-MM-DD --output data/refclass/fda.json
+./run.sh refclass collect openfda_crl --since 2015-01-01 --until YYYY-MM-DD --output data/refclass/crl.json
+./run.sh refclass collect edgar --cik CIK --since 2015-01-01 --until YYYY-MM-DD --output data/refclass/company.json
+./run.sh refclass fetch-bars --tickers VRNA KALV CRNX LQDA --since YYYY-MM-DD --until YYYY-MM-DD
+```
+
+Collectors default to small page bounds. Complete the required partitions and review coverage before using them for a census. Extra FDA searches cannot contain a conflicting date window, and acceptance refuses all extra FDA searches. Saved historic requests are retained even when they do not qualify for census coverage.
+
+`fetch-bars` reuses the Claude IBKR connection and includes XBI. It resolves contracts, requests `get_price_history` with `FIVE_YEARS`, and captures the actual tool transcript. The configured tool cannot page backward from an end date. Its plain OHLCV does not establish both as-traded and split-only adjusted closes. Such responses are saved as explicit gaps, and cannot price an event until the required conventions have primary support. Earlier history, delisted symbols and permissions can also produce gaps. Replay saved canonical JSONL with `--saved PATH`; this makes no broker call. Genuine broker schema and adjustment support still require live verification.
+
+Both broker modes use exact read-tool permissions and a PreToolUse hook that rejects all tools outside the read allowlist, including order instructions, alerts, watchlists and deletion. Other user/project permission settings are not loaded for these sessions. Unknown tool names fail closed; confirm the configured read-tool names during live verification.
+
+Prepare and reconcile independent reviews as follows. Repeat `--collection` for each FDA, CRL and EDGAR partition.
+
+```sh
+./run.sh refclass prepare-review --collection data/refclass/fda.json --collection data/refclass/crl.json --collection data/refclass/company.json --output data/refclass/prepared
+./run.sh refclass review-models data/refclass/prepared data/refclass/reviewed
+./run.sh refclass review
+```
+
+The bare review command lists saved disagreements under `data/refclass/`. To reconcile already saved CSVs, use `review --prepared .../candidates.json --reviews CLAUDE.csv CODEX.csv --output data/refclass/reviewed`. Each model covers every candidate with `candidate_id`, `decision`, `event_json` and `reason`. Decisions are include, exclude or unresolved. Evidence ranges and punctuation/case in drug names can differ without creating a disagreement. Substantive differences remain pending. Both readings and primary-file hashes are preserved. Exclusions need sources and reviews but do not need an invented ticker or company 8-K.
+
+Ebrahim can resolve a disagreement without editing either review. Create a CSV with those same four columns for the candidates being resolved. Each row supplies the chosen sourced event, an include/exclude decision and a reason. Supply one chosen tag value per feature. Structured candidate identities and dates cannot be changed. The resolution is stored separately, attributed to Ebrahim, with both original readings.
+
+```sh
+./run.sh refclass review --prepared data/refclass/prepared/candidates.json --reviews data/refclass/reviewed/claude.csv data/refclass/reviewed/codex.csv --resolve data/refclass/resolutions.csv --output data/refclass/reviewed
+```
+
+Build with `reviewed.json` after adding the sourced session calendar and other required snapshot fields. Bar collection JSON files can be supplied separately with `--collection`. Incomplete or unavailable prices remain counted as unpriced events.
+
+```sh
+./run.sh refclass build --input data/refclass/reviewed/reviewed.json --collection BAR_COLLECTION.json
+./run.sh refclass profile savara --input SOURCED_PROFILE.json
+./run.sh refclass show savara
+./run.sh refclass acceptance --targets PRIMARY_TARGETS.json
+```
+
+A profile supplies `source`, `locator`, `line_start`, `line_end`, `as_of`, `first_product`, `market_value` and `market_value_evidence`. Market value evidence carries its own source range, `currency: "USD"` and matching `as_of`. The parser accepts ISO and English dates, dollar symbols and thousand/million/billion scales. False first-product claims also require evidence of an existing US marketed product. Missing or unsupported wording is a gap.
+
+Acceptance targets are a primary-path JSON array for VRNA, KALV, CRNX and LQDA. Each row needs `ticker`, `action_date`, `pre_date`, `day1_date`, `day2_date`, the three corresponding `_close` fields, `close_convention: "as_traded"`, `return_convention: "split_only"`, `day1_raw` and `day2_raw`. Returns are fractions, not percentage points. Closes are compared to the cent using unadjusted bars; returns are checked to the precision of two decimal percentage points using split-adjusted bars. The target transcription must be checked against the original report during live acceptance. Price gaps elsewhere in the census are reported, not silently dropped; all four comparables must be priced.
+
+Research steps remain exempt from evidence gates. Legacy publication warns about missing or invalid evidence without changing its numerical output. New strict prose publication additionally requires `numeric_claims` covering every numeric token in the actual output. Each binding uses character `start`/`end` offsets and either primary line `evidence`, or a zero-based `computation` index into `arithmetic` with `input_evidence` keyed by input paths such as `/pre` and `/post`. Unbound or mismatched numbers block replacement of an existing output. This checks numerical coverage and arithmetic, not the semantic correctness of the model's interpretation of a source.
 
 The models don't do the arithmetic. After the reviews, a terms step pulls the deal's inputs into `out/terms.json`, such as the offer price, the exchange ratio, dates, dividends and probabilities. Python then works out the spread, the return per year for each closing date, the chance of closing the market implies, the probability-weighted result and break-even prices, plus proration scenarios for partial tenders, CVR payoffs and SPAC trust discounts. The final report quotes those figures and includes them in a section called Numbers from the calculator. Cards on the shortlist work the same way.
 
@@ -446,7 +492,7 @@ PDF filings show the cited page as an image under its text in the viewer. HTML f
 
 ## Learning from feedback
 
-`knowledge/research-standards.md` holds rules learned from independent critiques, such as starting probabilities from reference classes, splitting failure outcomes by type, treating the event-day price as rigorously as the probability, and preferring primary sources. Every step is told to follow it, and every check tests the work against it and lists each breach.
+`knowledge/research-standards.md` holds the available repository and approved specification standards. Earlier investor feedback is not present in this checkout and is not reconstructed from build reviews. Every research step is told to follow the available standards.
 
 When you get feedback from anyone, save it as a text file and run `./run.sh feedback FILE NAME`. It copies the feedback into that deal's folder, so the deal's next steps read it, then turns it into general rules and adds them to the standards with their source and date, skipping anything already covered. Leave out NAME for feedback that isn't about one deal.
 
@@ -548,7 +594,7 @@ Check the log for the step in `out/logs`. The command-line tools change their fl
 
 ## Safety
 
-The finder only reads public SEC data and delayed quotes, and it sends the SEC the name and email you gave it, as the SEC requires. Claude Code runs with read-only tools and Codex runs in a read-only sandbox. Kimi Code's non-interactive mode approves its own tool calls, so the prompts forbid writing files and browsing the web. Keep the kit in its own folder. The IBKR connector can only draft trade instructions that you approve inside IBKR, and the sizing prompt tells Claude not to draft any.
+The finder only reads public SEC data and delayed quotes, and it sends the SEC the name and email you gave it, as the SEC requires. Claude Code runs with read-only tools and Codex runs in a read-only sandbox. Kimi Code's non-interactive mode approves its own tool calls, so the prompts forbid writing files and browsing the web. Keep the kit in its own folder. Broker sessions allow only the read tools listed in `lib/ibkr_readonly.py`. A PreToolUse guard rejects every other tool, including order instructions and account mutations. New tool names require an explicit code review before they are allowed.
 
 ## Without the terminal
 

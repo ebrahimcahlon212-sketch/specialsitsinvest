@@ -107,6 +107,12 @@ def main():
     raw = open(sys.argv[1], encoding="utf-8", errors="replace").read()
     text = to_text(raw)
     blocks = re.findall(r"(?ms)^<<<BEGIN QUALITY>>>\s*\n(.*?)^<<<END QUALITY>>>\s*$", text)
+    clean_text = re.sub(r"(?ms)^<<<BEGIN QUALITY>>>\s*\n.*?^<<<END QUALITY>>>\s*$", "", text)
+    result = between_markers(clean_text)
+    status = 0
+    if result is None or not result.strip():
+        result = clean_text.strip() + "\n"
+        status = 2
     if mode != "research":
         try:
             evidence_path = Path(sys.argv[2] + ".quality.json")
@@ -114,15 +120,9 @@ def main():
                 # Preserve the supplied block for diagnostics, even if malformed.
                 evidence_path.write_text(blocks[-1] + "\n")
             preflight(Path(sys.argv[2]).parent, evidence_path=evidence_path,
-                      strict=mode == "publication")
+                      strict=mode == "publication", publication_text=result)
         except (ValueError, TypeError, KeyError, OSError) as exc:
             sys.exit(f"Stopped. Quality gate stopped publication. {exc}")
-    text = re.sub(r"(?ms)^<<<BEGIN QUALITY>>>\s*\n.*?^<<<END QUALITY>>>\s*$", "", text)
-    result = between_markers(text)
-    status = 0
-    if result is None or not result.strip():
-        result = text.strip() + "\n"
-        status = 2
     with open(sys.argv[2], "w", encoding="utf-8") as fh:
         fh.write(result)
     sys.exit(status)

@@ -150,7 +150,7 @@ class ReviewFourTests(unittest.TestCase):
             dict(type='text', text=json.dumps(rows[0]))]))))
         with self.assertRaisesRegex(ValueError, 'No historical'): transcript_bars(self.source, 'ibkr')
         self.source.write_text(sample.read_text().replace('split_only', 'dividend_adjusted'))
-        with self.assertRaisesRegex(ValueError, 'both close conventions'): transcript_bars(self.source, 'ibkr')
+        self.assertIn('close convention', transcript_bars(self.source, 'ibkr')[0]['error'])
 
     def test_fetch_request_bounds_and_xbi(self):
         self.assertEqual(request(['VRNA'], '2024-06-01', '2024-07-01')['tickers'], ['VRNA', 'XBI'])

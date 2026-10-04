@@ -207,10 +207,74 @@ def _validate(evidence):
     return results
 
 
-def validate(evidence, *, deal_root=None):
+def validate(evidence, *, deal_root=None, publication_text=None):
     token = _DEAL_ROOT.set(deal_root)
     try:
         require(isinstance(evidence, dict), "Quality evidence must be an object.")
-        return _validate(evidence)
+        result = _validate(evidence)
+        if publication_text is not None:
+            publication_numbers(publication_text, evidence)
+        return result
     finally:
         _DEAL_ROOT.reset(token)
+
+
+NUMBER = re.compile(r'[+-]?\d[\d,]*(?:\.\d+)?(?:[eE][+-]?\d+)?%?')
+
+
+def publication_numbers(text, evidence):
+    """Bind every numeric token in the actual output to a checked computation or source.
+
+    Offsets refer to the final extracted body. A model-selected arithmetic list
+    alone cannot certify prose. Unsupported numerical claims fail closed.
+    """
+    tokens = {(m.start(), m.end()): m.group() for m in NUMBER.finditer(text)}
+    claims = evidence.get('numeric_claims', [])
+    require(isinstance(claims, list), 'Publication numeric_claims must be a list.')
+    seen = set()
+
+    def sourced(value, source):
+        excerpt = source_excerpt(source)
+        # Exact tokens prevent matching 3 inside 30 or a larger amount.
+        wanted = str(value)
+        require(wanted in [m.group() for m in NUMBER.finditer(excerpt)],
+                'Published number or calculation input is absent from its cited source.')
+
+    def leaves(value, prefix=''):
+        if isinstance(value, dict):
+            for key, item in value.items():
+                yield from leaves(item, prefix + '/' + str(key))
+        elif isinstance(value, list):
+            for index, item in enumerate(value):
+                yield from leaves(item, prefix + '/' + str(index))
+        elif isinstance(value, (int, float)) and not isinstance(value, bool):
+            yield prefix, value
+        elif isinstance(value, str) and NUMBER.search(value):
+            # Dates and numeric strings also need primary evidence.
+            yield prefix, value
+
+    for claim in claims:
+        span = (claim['start'], claim['end'])
+        require(span in tokens and span not in seen, 'Invalid or duplicate publication number span.')
+        seen.add(span)
+        token = tokens[span]
+        if 'computation' not in claim:
+            sourced(token, claim['evidence'])
+            continue
+        index = claim['computation']
+        computations = evidence['arithmetic']
+        require(type(index) is int and 0 <= index < len(computations), 'Invalid computation reference.')
+        row = computations[index]
+        inputs = claim.get('input_evidence', {})
+        for pointer, value in leaves(row['inputs']):
+            require(pointer in inputs, 'Publication computation input lacks primary evidence. ' + pointer)
+            if isinstance(value, str) and '-' in value:
+                require(value in source_excerpt(inputs[pointer]), 'Calculation date differs from its source.')
+            else:
+                sourced(value, inputs[pointer])
+        displayed = finite(token.rstrip('%').replace(',', ''))
+        scale = 100 if token.endswith('%') else 1
+        decimals = len(token.rstrip('%').split('.')[-1]) if '.' in token else 0
+        arithmetic(displayed, finite(row['reported']) * scale, tolerance=0.5 * 10 ** -decimals + 1e-12)
+    require(seen == set(tokens), 'Publication has numeric claims without source or computation bindings.')
+    return len(tokens)
