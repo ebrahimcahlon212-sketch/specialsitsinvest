@@ -127,10 +127,10 @@ class ReviewFixes(unittest.TestCase):
                 folder.mkdir(parents=True)
                 (folder / "filings").mkdir()
                 source = folder / "filings/profile.txt"
-                source.write_text("The first US product. Market value USD 1000000.")
+                source.write_text("The first US approved product. Market value USD 1000000 as of 2026-10-04.")
                 (folder / "refclass.json").write_text(json.dumps(dict(first_product=first, market_value=1000000,
                     source=str(source), locator="L.1", line_start=1, line_end=1,
-                    market_value_evidence=dict(source=str(source), line_start=1, line_end=1), as_of="2026-10-04")))
+                    market_value_evidence=dict(source=str(source), line_start=1, line_end=1, currency="USD", as_of="2026-10-04"), as_of="2026-10-04")))
             db = root / "events.sqlite"
             build(db, bundle(), root / "knowledge")
             self.assertEqual(report(db, "one", root / "knowledge")["selected_class"], "C")

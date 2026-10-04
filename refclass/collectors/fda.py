@@ -32,6 +32,7 @@ def approvals(record, origin, index):
         when = day(sub['submission_status_date'])
         result.append(dict(candidate_id=f"fda:{application}:{sub['submission_number']}:{when}",
                            company=record['sponsor_name'], application=application, event_type='approval',
+                           action_evidence=dict(source=origin['source'], pointer=f'/results/{index}/submissions/{n}/submission_status_date'),
                            action_date=when, announced_at=None, announcement_time_unknown=True,
                            drugs=sorted({p['brand_name'] for p in record.get('products', []) if p.get('brand_name')}),
                            review_priority=sub.get('review_priority'), original=True,
@@ -56,7 +57,7 @@ def letters(record, origin, index):
     app = application.group(1).upper() + application.group(2)
     when = day(record['letter_date'])
     return [dict(candidate_id=f'crl:{app}:{when}', company=record['company_name'], application=app,
-                 event_type='crl', action_date=when, announced_at=None, announcement_time_unknown=True,
+                 event_type='crl', action_evidence=dict(source=origin['source'], pointer=f'/results/{index}/letter_date'), action_date=when, announced_at=None, announcement_time_unknown=True,
                  original=None, text=text, file_name=record.get('file_name'), status='pending',
                  source=origin['source'], url=origin['url'], locator=f'/results/{index}',
                  downloaded_at=origin['downloaded_at'],

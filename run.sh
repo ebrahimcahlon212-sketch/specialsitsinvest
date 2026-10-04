@@ -70,10 +70,13 @@ rel()  { case "$1" in "$KIT"/*) printf '%s' "${1#"$KIT"/}" ;; *) printf '%s' "$1
 call_claude() {
   local tools="Read,Glob,Grep" args
   case "${4:-}" in
-    ibkr) tools="$tools,mcp__$IBKR_SERVER" ;;
+    ibkr|ibkr-bars) tools="$tools,mcp__$IBKR_SERVER" ;;
     web) tools="$tools,WebSearch,WebFetch" ;;
   esac
   args=(-p "$(cat "$1")" --permission-mode dontAsk --allowedTools "$tools" --disallowedTools "Task,Agent,Bash,Write,Edit" --output-format text)
+  if [ "${4:-}" = ibkr-bars ]; then
+    args+=(--output-format stream-json --verbose)
+  fi
   if [ -n "$CLAUDE_MODEL" ]; then args+=(--model "$CLAUDE_MODEL"); fi
   env -u ANTHROPIC_API_KEY -u ANTHROPIC_AUTH_TOKEN claude "${args[@]}" < /dev/null > "$2" 2> "$3"
 }
@@ -1243,7 +1246,31 @@ case "$WEB_MODEL" in claude|codex) ;; *) die "WEB_MODEL must be claude or codex,
 case "${1:-help}" in
   refclass)
     shift
-    if [ "${1:-}" = build ] || [ "${1:-}" = update ] || [ "${1:-}" = collect ]; then
+    if [ "${1:-}" = review-models ]; then
+      [ "$#" -eq 3 ] || die "Use refclass review-models PREPARED_DIRECTORY OUTPUT_DIRECTORY"
+      prepared_dir="$2"
+      OUT="$3"
+      mkdir -p "$OUT/raw" "$OUT/logs"
+      run_step claude "$prepared_dir/claude-review.md" event-review-one "$OUT/claude.csv" || die "First event review failed."
+      run_step codex "$prepared_dir/codex-review.md" event-review-two "$OUT/codex.csv" || die "Second event review failed."
+      "$PYTHON" -m refclass review --prepared "$prepared_dir/candidates.json" --reviews "$OUT/claude.csv" "$OUT/codex.csv" --output "$OUT" || exit $?
+    elif [ "${1:-}" = fetch-bars ]; then
+      shift
+      case " $* " in
+        *" --saved "*) "$PYTHON" -m refclass.bars "$@" || exit $? ;;
+        *)
+          ibkr_ready || die "IBKR is not connected to Claude Code."
+          request_paths=$("$PYTHON" -m refclass.bars --prepare "$@") || exit $?
+          mapfile -t bar_paths <<< "$request_paths"
+          OUT="$KIT/data/refclass/fetch-bars"
+          mkdir -p "$OUT/raw" "$OUT/logs"
+          [ ! -e "${bar_paths[1]}" ] || die "Raw bars already exist. Replay them with --saved."
+          bar_transcript="${bar_paths[1]%.jsonl}.transcript.jsonl"
+          call_claude "${bar_paths[0]}" "$bar_transcript" "$OUT/logs/historical-bars.log" ibkr-bars || die "Historical bars fetch failed."
+          "$PYTHON" -m refclass.bars "$@" --transcript "$bar_transcript" --server "$IBKR_SERVER" || exit $?
+          ;;
+      esac
+    elif [ "${1:-}" = build ] || [ "${1:-}" = update ] || [ "${1:-}" = collect ]; then
       foreground=false
       refclass_args=()
       for arg in "$@"; do

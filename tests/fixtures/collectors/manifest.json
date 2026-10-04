@@ -115,5 +115,32 @@
     "bytes": 10276,
     "sha256": "de99441b4bfa85813ee0016dd72171b7da4f1f544235e34c1b519417fe2096c8",
     "file": "b51360f12504b7c3-de99441b4bfa.response"
+  },
+  {
+    "url": "https://api.fda.gov/drug/drugsfda.json?limit=2&skip=0&search=%28application_number%3ANDA%2A+AND+submissions.submission_status_date%3A%5B20250101+TO+20261004%5D%29+AND+submissions.submission_status_date%3A%5B20150101+TO+20261004%5D",
+    "downloaded_at": "2026-10-04T15:54:03.520737+00:00",
+    "status": 200,
+    "content_type": "application/json; charset=utf-8",
+    "bytes": 60757,
+    "sha256": "a468ac96ed7c8a9d9ab3e0334178e811f6dc9e7015ed800d4f13711b953bcf50",
+    "file": "6529f027fc54a5eb-a468ac96ed7c.response"
+  },
+  {
+    "url": "https://api.fda.gov/drug/drugsfda.json?limit=2&skip=0&search=%28application_number%3ANDA%2A+AND+submissions.submission_status_date%3A%5B20250101+TO+20261004%5D%29+AND+submissions.submission_status_date%3A%5B20250101+TO+20261004%5D",
+    "downloaded_at": "2026-10-04T15:54:04.597167+00:00",
+    "status": 200,
+    "content_type": "application/json; charset=utf-8",
+    "bytes": 60757,
+    "sha256": "a468ac96ed7c8a9d9ab3e0334178e811f6dc9e7015ed800d4f13711b953bcf50",
+    "file": "3d4ca6f59ec2579c-a468ac96ed7c.response"
+  },
+  {
+    "url": "https://api.fda.gov/transparency/crl.json?limit=2&skip=0&search=letter_date%3A%5B20150101+TO+20261004%5D",
+    "downloaded_at": "2026-10-04T15:54:05.480672+00:00",
+    "status": 200,
+    "content_type": "application/json; charset=utf-8",
+    "bytes": 35190,
+    "sha256": "62d0c235cf23db7002da804917c7b3e3388795cd803263fdb3a48b3ac79e1a55",
+    "file": "f7b6ead66aeda2df-62d0c235cf23.response"
   }
 ]

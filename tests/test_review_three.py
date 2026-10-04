@@ -39,7 +39,7 @@ class ReviewThreeTests(unittest.TestCase):
                 ('2026-09-20', 'The FDA approved the drug on Sept. 20, 2026.'),
                 ('2026-11-05', 'On November 05, 2026, the FDA approved the drug.')]:
                 source.write_text(text)
-                decision_date('fda_action', when, ev)
+                with self.assertRaises(GateError): decision_date('fda_action', when, ev)
             for text in ['We plan to submit the NDA and anticipate an action date of November 20, 2026.',
                          'We expect a PDUFA target action date of November 20, 2026.',
                          'Submitted November 20, 2026. The FDA approved it on March 20, 2027.']:
@@ -220,6 +220,12 @@ class ReviewThreeTests(unittest.TestCase):
                          inventory_sources=[dict(source=str(inv))], action_date='2026-09-02', action_evidence=ev(5),
                          announcement_evidence=ev(4), tags=[dict(ev(6), feature='first_product', value='yes', tagger=who)
                                                          for who in ('one', 'two')])
+            action = root / 'fda.json'
+            action.write_text(json.dumps(dict(letter_date='2026-09-02')))
+            sec = root / 'acceptance.json'
+            sec.write_text(json.dumps(dict(filing=dict(form='8-K', acceptanceDateTime=timestamp))))
+            event['action_evidence'] = dict(source=str(action), pointer='/letter_date')
+            event['announcement_evidence'] = dict(source=str(sec), pointer='/filing')
             bars = root / 'bars.jsonl'; prices = []; records = []
             sessions = [dict(date=f'2026-09-0{i}', open='09:30', close='16:00') for i in (1, 2, 3)]
             for ticker in ('TEST', 'XBI'):
@@ -230,6 +236,11 @@ class ReviewThreeTests(unittest.TestCase):
                     prices.append({**{k: bar[k] for k in ('ticker', 'date', 'close', 'adjusted_close')},
                                    'source': f'{bars}#L{len(records)}'})
             bars.write_text('\n'.join(records))
+            from refclass.engine import reconcile_tags
+            from refclass.review import seal
+            event = reconcile_tags(event)
+            event['review_evidence'] = ev(1)
+            seal(event, 'include', ['one', 'two'])
             db = Path(tmp) / 'data.sqlite'
             result = build(db, dict(as_of='2026-10-04', events=[event], prices=prices, sessions=sessions), ROOT / 'knowledge')
             self.assertEqual(result['eligible'], 1)
@@ -237,8 +248,8 @@ class ReviewThreeTests(unittest.TestCase):
             result['events'][0]['reaction']['day1_abnormal'] = .5
             with self.assertRaisesRegex(GateError, 'reaction'): check(db, result)
             result = report(db, 'all', ROOT / 'knowledge')
-            source.write_text(source.read_text().replace('approved', 'expects to approve'))
-            with self.assertRaisesRegex(GateError, 'Date type'): check(db, result)
+            action.write_text(json.dumps(dict(letter_date='2026-09-03')))
+            with self.assertRaisesRegex(GateError, 'primary source changed'): check(db, result)
 
     def test_legacy_currency_mismatch_warns_even_when_converted_discount_is_normal(self):
         from tests.test_amendments import catalysts

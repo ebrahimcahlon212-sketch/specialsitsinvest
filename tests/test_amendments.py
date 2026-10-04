@@ -163,7 +163,7 @@ call_codex() {
             for sentence in ('The FDA assigned a PDUFA target action date of November 20, 2026 for the NDA submitted in March.',
                              'The FDA set a goal date of Nov. 20, 2026.', 'The action date is 20 November 2026.'):
                 p.write_text(sentence)
-                decision_date('fda_goal', '2026-11-20', ev)
+                with self.assertRaises(GateError): decision_date('fda_goal', '2026-11-20', ev)
             p.write_text('Submitted on November 20, 2026 for a PDUFA goal date of March 20, 2027.')
             with self.assertRaises(GateError):
                 decision_date('fda_goal', '2026-11-20', ev)

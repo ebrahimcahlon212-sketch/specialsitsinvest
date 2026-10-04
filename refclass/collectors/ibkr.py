@@ -21,14 +21,15 @@ def collect(path, *, tickers, since, until):
     wanted = set(tickers) | {'XBI'}
     result = dict(source='ibkr', prices=[], gaps=[], complete=False,
                   scope=dict(since=since, until=until, tickers=sorted(wanted)))
-    parsed = read_quotes(path)
+    parsed = {json.dumps(row, sort_keys=True) for row in read_quotes(path)}
     seen = set()
+    cache = {}
     for number, line in enumerate(path.read_text().splitlines(), 1):
         if not line.strip():
             continue
         try:
             raw = json.loads(line)
-            if raw not in parsed:
+            if json.dumps(raw, sort_keys=True) not in parsed:
                 raise ValueError('Not a quote object recognised by the kit price reader.')
             if raw['ticker'] not in wanted:
                 continue
@@ -37,7 +38,7 @@ def collect(path, *, tickers, since, until):
                 continue
             row = dict(ticker=raw['ticker'], date=day.isoformat(), close=positive(raw['close']),
                        adjusted_close=positive(raw['adjusted_close']), source=f'{path}#L{number}')
-            price_evidence(row)
+            price_evidence(row, cache)
             key = (row['ticker'], row['date'])
             if key in seen:
                 raise ValueError('Duplicate daily bar.')

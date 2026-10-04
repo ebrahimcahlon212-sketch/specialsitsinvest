@@ -30,7 +30,7 @@ def main(argv=None):
     quality.add_argument("evidence", type=Path)
     collect = sub.add_parser("collect", help="Collect bounded FDA or EDGAR source candidates for review")
     collect.add_argument("source", choices=("drugs_at_fda", "openfda_crl", "edgar", "ibkr"))
-    collect.add_argument("--cache", type=Path, required=True)
+    collect.add_argument("--cache", type=Path, help="Offline cache override; live downloads always use data/refclass/raw/source/date")
     collect.add_argument("--output", type=Path, required=True)
     collect.add_argument("--offline", action="store_true", help="Replay only saved cache responses")
     collect.add_argument("--settings", type=Path, default=root / "settings.env")
@@ -45,11 +45,52 @@ def main(argv=None):
     collect.add_argument("--max-filings", type=int, default=1)
     collect.add_argument("--max-history", type=int, default=1)
     collect.add_argument("--max-exhibits", type=int, default=2)
+    profile = sub.add_parser('profile', help='Validate and save a deal profile from primary deal documents')
+    profile.add_argument('name')
+    profile.add_argument('--input', type=Path, required=True)
+    acceptance = sub.add_parser('acceptance', help='Verify live phase-one criteria for Savara')
+    acceptance.add_argument('--db', type=Path, default=root / 'data/refclass.sqlite')
+    acceptance.add_argument('--targets', type=Path, required=True)
+    prepare = sub.add_parser('prepare-review', help='Assemble candidates and independent review prompts')
+    prepare.add_argument('--collection', type=Path, action='append', required=True)
+    prepare.add_argument('--output', type=Path, required=True)
+    review = sub.add_parser('review', help='Reconcile two saved independent model CSV reviews')
+    review.add_argument('--prepared', type=Path, required=True)
+    review.add_argument('--reviews', type=Path, nargs=2, required=True)
+    review.add_argument('--output', type=Path, required=True)
     args = parser.parse_args(argv)
     try:
+        if args.command == 'profile':
+            from .profile import verify_profile
+            folder = root / 'deals' / args.name
+            if Path(args.name).name != args.name or not folder.is_dir():
+                raise ValueError('Deal folder does not exist')
+            profile = json.loads(args.input.read_text())
+            verify_profile(profile, folder)
+            (folder / 'refclass.json').write_text(json.dumps(profile, indent=2) + '\n')
+            print(f'Saved sourced profile in {folder / "refclass.json"}')
+            return 0
+        if args.command == 'acceptance':
+            from .acceptance import evaluate
+            print(evaluate(args.db, root / 'knowledge', args.targets))
+            return 0
+        if args.command == 'prepare-review':
+            from .review import prepare
+            prepare(args.collection, args.output)
+            print(f'Saved code-assembled candidates and two review prompts in {args.output}')
+            return 0
+        if args.command == 'review':
+            from .review import reconcile
+            count = reconcile(args.prepared, args.reviews, args.output)
+            print(f'{count} disagreements for Ebrahim. See {args.output / "disagreements.csv"}')
+            return 1 if count else 0
         if args.command == "collect":
             from .collectors.http import Client, saved_contact
             from .collectors import fda, edgar
+            if not args.offline:
+                args.cache = root / 'data/refclass/raw' / args.source / date.today().isoformat()
+            elif args.cache is None:
+                raise ValueError('Offline replay needs --cache.')
             with job_lock(args.cache / '.collection.lock'):
                 contact = saved_contact(args.settings) if args.source == "edgar" and not args.offline else None
                 client = Client(args.cache, contact=contact, offline=args.offline)

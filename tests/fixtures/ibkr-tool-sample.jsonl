@@ -1,0 +1,2 @@
+{"type": "assistant", "message": {"content": [{"type": "tool_use", "id": "sample", "name": "mcp__ibkr__historical_bars", "input": {}}]}}
+{"type": "user", "message": {"content": [{"type": "tool_result", "tool_use_id": "sample", "content": "{\"ticker\": \"TEST\", \"adjustment\": \"split_only\", \"bars\": [{\"date\": \"2026-09-01\", \"close\": 10.0, \"adjusted_close\": 10.0}]}"}]}}

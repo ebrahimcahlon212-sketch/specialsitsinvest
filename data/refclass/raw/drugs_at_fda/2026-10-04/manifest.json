@@ -1,0 +1,20 @@
+[
+  {
+    "url": "https://api.fda.gov/drug/drugsfda.json?limit=2&skip=0&search=%28application_number%3ANDA%2A+AND+submissions.submission_status_date%3A%5B20250101+TO+20261004%5D%29+AND+submissions.submission_status_date%3A%5B20150101+TO+20261004%5D",
+    "downloaded_at": "2026-10-04T15:54:03.520737+00:00",
+    "status": 200,
+    "content_type": "application/json; charset=utf-8",
+    "bytes": 60757,
+    "sha256": "a468ac96ed7c8a9d9ab3e0334178e811f6dc9e7015ed800d4f13711b953bcf50",
+    "file": "6529f027fc54a5eb-a468ac96ed7c.response"
+  },
+  {
+    "url": "https://api.fda.gov/drug/drugsfda.json?limit=2&skip=0&search=%28application_number%3ANDA%2A+AND+submissions.submission_status_date%3A%5B20250101+TO+20261004%5D%29+AND+submissions.submission_status_date%3A%5B20250101+TO+20261004%5D",
+    "downloaded_at": "2026-10-04T15:54:04.597167+00:00",
+    "status": 200,
+    "content_type": "application/json; charset=utf-8",
+    "bytes": 60757,
+    "sha256": "a468ac96ed7c8a9d9ab3e0334178e811f6dc9e7015ed800d4f13711b953bcf50",
+    "file": "3d4ca6f59ec2579c-a468ac96ed7c.response"
+  }
+]

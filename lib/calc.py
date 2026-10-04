@@ -20,7 +20,7 @@ import re
 import sys
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-from quality_gate import preflight
+from quality_gate import preflight, warn_check
 from refclass.quality import whole_holding
 
 TODAY = datetime.date.today()
@@ -229,8 +229,8 @@ def compute(t, prices):
                     row["results"].append(item)
                 rows.append(row)
         if rows and "spread_pct" in res:
-            expected = whole_holding(px * (1 + costs), tprice, rows[0]["accepted"], back_list[0][1])
-            if abs(res["spread_pct"] - expected) > .00005:
+            expected = warn_check(whole_holding, px * (1 + costs), tprice, rows[0]["accepted"], back_list[0][1])
+            if expected is not None and abs(res["spread_pct"] - (expected + target_divs / (px * (1 + costs)))) > .00005:
                 print("Warning. Partial tender gate failed. Headline is not the whole-holding return "
                       "at full participation. Compare the tender scenarios.", file=sys.stderr)
         res["tender"] = {"price": tprice, "rows": rows, "days": pdays,

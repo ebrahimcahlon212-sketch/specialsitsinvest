@@ -61,20 +61,7 @@ def attribution(company, applicant, economics_source=None):
 def source_excerpt(evidence, deal_root=None):
     """Re-read an exact, bounded line range in a saved primary document."""
     require(isinstance(evidence, dict), "Source evidence needs a saved document and line range.")
-    path = Path(evidence["source"])
-    root = deal_root or _DEAL_ROOT.get()
-    if root is None:
-        # Direct callers must name a deal, never infer trust from a folder
-        # merely named work inside model output.
-        root = next((p for p in reversed(path.absolute().parents) if p.parent.name == "deals"), None)
-    require(root is not None, "Source gate needs a trusted deal root.")
-    root = Path(root).resolve()
-    if not path.is_absolute():
-        path = root / path
-    path = path.resolve()
-    allowed = [root / "filings", root / "work"]
-    require(any(path.is_relative_to(p) and p.resolve() == p for p in allowed),
-            "Source gate only reads this deal's filings or work folders.")
+    path = primary_path(evidence["source"], deal_root)
     lines = path.read_text().splitlines()
     start, end = evidence["line_start"], evidence["line_end"]
     require(isinstance(start, int) and isinstance(end, int) and 1 <= start <= end <= len(lines)
@@ -82,27 +69,72 @@ def source_excerpt(evidence, deal_root=None):
     return " ".join(lines[start - 1:end])
 
 
+def primary_path(source, deal_root=None):
+    path = Path(source)
+    root = deal_root or _DEAL_ROOT.get()
+    raw = Path(__file__).resolve().parents[1] / "data/refclass/raw"
+    if not path.is_absolute() and root is not None:
+        path = Path(root) / path
+    path = path.absolute()
+    resolved = path.resolve()
+    # Resolve both boundaries and reject symlink escapes.
+    if resolved.is_relative_to(raw) and raw.resolve() == raw:
+        return resolved
+    if root is None:
+        root = next((p for p in reversed(path.parents) if p.parent.name == "deals"), None)
+    require(root is not None, "Source gate needs a trusted deal root or data/refclass/raw.")
+    root = Path(root).resolve()
+    require(any(resolved.is_relative_to(p) and p.resolve() == p
+                for p in (root / "filings", root / "work")),
+            "Source gate only reads primary deal folders or data/refclass/raw.")
+    return resolved
+
+
+def structured(evidence):
+    """Read an exact JSON pointer from a primary response, never model prose."""
+    import json
+    value = json.loads(primary_path(evidence['source']).read_text())
+    pointer = evidence['pointer']
+    if pointer == '':
+        return value
+    require(pointer.startswith('/'), 'Structured evidence needs a JSON pointer.')
+    for part in pointer[1:].split('/'):
+        part = part.replace('~1', '/').replace('~0', '~')
+        value = value[int(part)] if isinstance(value, list) else value[part]
+    return value
+
+
 def decision_date(kind, value=None, evidence=None):
     require(kind in {"fda_action", "fda_goal"}, "Date type gate failed. Expected an FDA action or goal date.")
-    require(value is not None and evidence is not None, "Date type gate needs the date and primary-source evidence.")
-    day = date.fromisoformat(value)
-    excerpt = source_excerpt(evidence)
-    # Protect abbreviated months from sentence splitting, then bind the date
-    # to an FDA clause. A submission date elsewhere in the sentence is not an action.
-    excerpt = re.sub(r"\b(Jan|Feb|Mar|Apr|Jun|Jul|Aug|Sep|Sept|Oct|Nov|Dec)\.", r"\1", excerpt, flags=re.I)
-    month = rf"(?:{day.strftime('%B')}|{day.strftime('%b')}" + ("|Sept" if day.month == 9 else "") + ")"
-    dates = rf"(?:{re.escape(value)}|{month}\s+0?{day.day},?\s+{day.year}|0?{day.day}\s+{month}\s+{day.year})"
-    sentences = re.split(r"(?<=[.!?])\s+", excerpt)
-    if kind == "fda_goal":
-        clause = r"(?:PDUFA(?: target)?(?: action)?(?: goal)? date|target action date|goal date|action date)"
-        pattern = rf"{clause}\s*(?:of|is|was|has been set for|set for|for|on|:)?\s*{dates}"
-    else:
-        action = r"(?:FDA\)?\s+(?:has\s+)?(?:approved|rejected|issued (?:a |an )?complete response letter)|received (?:a |an )?complete response letter)"
-        pattern = rf"(?:{action}.{{0,100}}?{dates}|{dates},?\s+(?:the\s+)?\(?{action})"
-    require(any(re.search(pattern, sentence, re.I) and
-                not re.search(r"\b(?:expect\w*|anticipat\w*|plan\w*|intend\w*)\b", sentence, re.I)
-                for sentence in sentences),
-            "Date type gate failed. Source does not unambiguously support this FDA date; review required.")
+    require(value is not None and isinstance(evidence, dict) and 'pointer' in evidence,
+            "Date type gate needs structured primary-source evidence; prose cannot establish a date.")
+    from .collectors.fda import day
+    date.fromisoformat(value)
+    field = evidence['pointer'].rsplit('/', 1)[-1]
+    allowed = {'submission_status_date', 'letter_date'} if kind == 'fda_action' else {'goal_date'}
+    require(field in allowed, 'Date type gate failed. Wrong structured field.')
+    require(day(structured(evidence)) == value, 'Date type gate failed. Structured date mismatch.')
+    if field == 'submission_status_date':
+        parent = dict(evidence, pointer=evidence['pointer'].rsplit('/', 1)[0])
+        row = structured(parent)
+        require(row.get('submission_status') == 'AP' and row.get('submission_type') == 'ORIG',
+                'Date type gate requires an original approval action.')
+
+
+def acceptance_time(value, evidence):
+    from datetime import datetime
+    require('pointer' in evidence, 'Announcement needs structured SEC acceptance evidence.')
+    row = structured(evidence)
+    # SEC inventories are column arrays. Evidence points at the inventory and an index.
+    index = evidence.get('index')
+    if index is not None:
+        row = {k: v[index] for k, v in row.items()}
+    require(row['form'] == '8-K', 'Announcement source must be a company 8-K.')
+    parse = lambda s: datetime.fromisoformat(s.replace('Z', '+00:00'))
+    actual, expected = parse(row['acceptanceDateTime']), parse(value)
+    require(actual.tzinfo is not None and expected.tzinfo is not None and actual == expected,
+            'Announcement differs from SEC acceptance time.')
+    return row
 
 
 def arithmetic(reported, recomputed, tolerance=0.005):

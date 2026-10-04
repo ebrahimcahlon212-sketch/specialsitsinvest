@@ -11,6 +11,8 @@ def job_key(args):
     if not args or args[0] in {"help", "--help", "-h", "version", "doctor", "knowledge"}:
         return None
     if args[0] == "refclass":
+        if len(args) > 1 and args[1] in ('fetch-bars', 'review-models'):
+            return 'refclass-' + args[1]
         return None  # Database writes have their own lock.
     if len(args) > 1 and args[1] in {"ask", "view", "ledger"}:
         return None

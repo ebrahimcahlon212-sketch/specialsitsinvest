@@ -29,6 +29,9 @@ For each situation, write one line of JSON with these keys.
 | date_text | The date as the source states it |
 | anchor_kind | What the value anchor is, such as NAV, cash, offer price, minimum price, claim, assets or none |
 | anchor_value | The anchor per share as a plain number in the same units the shares trade in, meaning pence for London, or null |
+| anchor_unit | Explicit unit of anchor_value, such as USD, GBP, GBp or EUR. Do not infer from the listing |
+| price_unit | Explicit trading price unit, distinguishing GBP from GBp |
+| fx | Conversion rates used between currencies, or null if none |
 | anchor_date | The date the anchor was measured |
 | summary | One plain sentence on what happens on the date |
 | how_value_unlocks | One or two sentences on how the event could close the gap between the price and the anchor |

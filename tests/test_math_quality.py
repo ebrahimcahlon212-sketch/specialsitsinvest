@@ -77,8 +77,10 @@ class QualityTests(unittest.TestCase):
             source.parent.mkdir(parents=True)
             source.write_text("FDA approved the drug on 2026-10-04.\nThe PDUFA goal date is 2026-11-20.\nSubmitted on 2026-10-01.")
             evidence = dict(source=str(source), line_start=1, line_end=3)
-            decision_date("fda_action", "2026-10-04", evidence)
-            decision_date("fda_goal", "2026-11-20", evidence)
+            with self.assertRaises(GateError):
+                decision_date("fda_action", "2026-10-04", evidence)
+            with self.assertRaises(GateError):
+                decision_date("fda_goal", "2026-11-20", evidence)
             with self.assertRaises(GateError):
                 decision_date("fda_goal", "2026-10-01", evidence)
             with self.assertRaises(GateError):

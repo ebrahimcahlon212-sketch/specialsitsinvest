@@ -22,16 +22,6 @@ QUERY = 'application_number:NDA* AND submissions.submission_status_date:[2025010
 
 def fixture_client():
     client = Client(CACHE, offline=True, opener=lambda *a, **kw: (_ for _ in ()).throw(AssertionError('Network attempted')))
-    original = client.json
-    def replay(url):
-        # Parser replay only. The old downloaded samples predate automatic
-        # date filters. Keep their actual source URL and download provenance.
-        if url.startswith('https://api.fda.gov/'):
-            endpoint = url.split('?')[0]
-            saved = next(r['url'] for r in client.records if r['url'].split('?')[0] == endpoint)
-            return original(saved)
-        return original(url)
-    client.json = replay
     return client
 
 
@@ -83,7 +73,7 @@ class RealResponseTests(unittest.TestCase):
         self.assertEqual(row['accessionNumber'], '0001193125-25-258629')
         self.assertEqual([d['form'] for d in row['documents']], ['8-K', 'EX-99.1'])
         self.assertTrue(row['acceptanceDateTime'])
-        self.assertIsNone(row['announced_at'])
+        self.assertEqual(row['announced_at'], row['acceptanceDateTime'])
         for doc in row['documents']:
             for signal in doc['signals']:
                 self.assertEqual(doc['text'].splitlines()[signal['line'] - 1], signal['text'])
@@ -112,8 +102,8 @@ class RealResponseTests(unittest.TestCase):
             self.assertEqual(result.returncode, 1, result.stderr)
             data = json.loads(out.read_text())
             self.assertEqual(data['stage'], 'source_candidates_not_verified_events')
-            self.assertEqual(data['candidate_count'], 0)
-            self.assertIn('missing from offline', ' '.join(data['gaps']))
+            self.assertEqual(data['candidate_count'], 1)
+            self.assertNotIn('missing from offline', ' '.join(data['gaps']))
             result = subprocess.run([sys.executable, '-m', 'refclass', 'collect', 'edgar', '--offline',
                                      '--cache', str(cache), '--output', str(out), '--cik', '1160308',
                                      '--since', '2025-10-30', '--until', '2025-10-30', '--max-history', '0', '--max-exhibits', '1'],

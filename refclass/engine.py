@@ -27,9 +27,10 @@ def conventions(knowledge):
     for name in ("rules", "features"):
         content = (Path(knowledge) / f"refclass-{name}.md").read_bytes()
         first = content.decode().splitlines()[0]
-        if not first.endswith("version 1"):
+        version = 2 if name == "rules" else 1
+        if not first.endswith(f"version {version}"):
             raise ValueError(f"Unsupported {name} version. Update the engine and its tests first.")
-        result[f"{name}_version"] = 1
+        result[f"{name}_version"] = version
         result[f"{name}_sha256"] = hashlib.sha256(content).hexdigest()
     return result
 
@@ -204,7 +205,11 @@ def build(db, snapshot, knowledge, update=False):
             snapshot["pending_candidates"] = sorted(set(json.loads(previous.get("pending_candidates", "[]")) + snapshot.get("pending_candidates", [])))
             snapshot["fixture"] = bool(snapshot.get("fixture") or json.loads(previous.get("fixture", "false")))
             coverage = json.loads(previous.get("coverage", "{}"))
-            coverage.update(snapshot.get("coverage", {}))
+            for source, partitions in snapshot.get("coverage", {}).items():
+                old = coverage.get(source, [])
+                old = old if isinstance(old, list) else [old]
+                new = partitions if isinstance(partitions, list) else [partitions]
+                coverage[source] = old + [p for p in new if p not in old]
             snapshot["coverage"] = coverage
             snapshot["gaps"] = sorted(set(json.loads(previous.get("gaps", "[]")) + snapshot.get("gaps", [])))
         as_of = snapshot["as_of"]
@@ -216,8 +221,9 @@ def build(db, snapshot, knowledge, update=False):
                 raise ValueError("Synthetic price sources require fixture=true; they cannot be production inputs.")
         if not snapshot.get("fixture"):
             from .publication import price_evidence
+            cache = {}
             for price in prices:
-                price_evidence(price)
+                price_evidence(price, cache)
         seen = set()
         prepared = []
         for event in events:
@@ -229,7 +235,7 @@ def build(db, snapshot, knowledge, update=False):
             if event["event_id"] in seen:
                 raise ValueError("Duplicate event_id in snapshot")
             seen.add(event["event_id"])
-            excluded = exclusion(event, as_of)
+            excluded = ('Excluded by independent reviews' if event.get('event_review', {}).get('decision') == 'exclude' else None) or exclusion(event, as_of)
             cap = market_value(event, prices, sessions)
             if not snapshot.get("fixture"):
                 excluded = excluded or eligibility_gap(event)
@@ -334,16 +340,8 @@ def report(db, name, knowledge):
             date.fromisoformat(profile["as_of"])
             from .quality import source_excerpt, require
             excerpt = source_excerpt(profile, deal_root=profile_path.parent)
-            # The saved statement must support the fields used to select a class.
-            import re
-            if profile.get("first_product") is True:
-                require(bool(re.search(r"(?:first (?:US |U\.S\. )?product|no (?:approved|commercial) products)", excerpt, re.I)),
-                        "Deal profile source does not establish first-product status.")
-            if profile.get("market_value") is not None:
-                cap_evidence = profile["market_value_evidence"]
-                source_excerpt(cap_evidence, deal_root=profile_path.parent)
-                require(str(profile["market_value"]) in source_excerpt(cap_evidence, deal_root=profile_path.parent).replace(",", ""),
-                        "Deal profile source does not establish market value in USD.")
+            from .profile import verify_profile
+            verify_profile(profile, profile_path.parent)
             selected = "A"
             if profile.get("first_product") is True:
                 selected = "B"
@@ -356,7 +354,7 @@ def report(db, name, knowledge):
                 unknown_time=sum(r.get("unknown_time", False) for _, r, _ in rows),
                 unknown_market_value=sum(cap is None for _, _, cap in rows), classes=classes,
                 unknown_first_product=sum(e.get("first_product") is None for e, _, _ in rows),
-                exclusions=[dict(event_id=json.loads(e)["event_id"], reason=excluded)
+                exclusions=[dict(event_id=json.loads(e)["event_id"], reason=excluded, event=json.loads(e))
                             for e, r, cap, excluded in stored if excluded],
                 events=[dict(event=e, reaction=r, market_value=cap) for e, r, cap in rows])
 

@@ -4,12 +4,22 @@ import json
 from pathlib import Path
 import sqlite3
 
-from .engine import reaction, market_value, summarize
+from .engine import reaction, market_value, summarize, exclusion
 from .provenance import eligibility_gap, shares_verified
-from .quality import require, source_excerpt, decision_date
+from .quality import require, source_excerpt, decision_date, acceptance_time, primary_path
 
 
-def price_evidence(row):
+def primary_line(source, line, cache=None):
+    if cache is None:
+        return source_excerpt(dict(source=source, line_start=line, line_end=line))
+    path = primary_path(source)
+    if path not in cache:
+        cache[path] = path.read_text().splitlines()
+    require(1 <= line <= len(cache[path]), 'Invalid bar line locator.')
+    return cache[path][line - 1]
+
+
+def price_evidence(row, cache=None):
     """Match each used bar to an exact saved primary JSON line.
 
     A label containing 'IBKR' is insufficient. Source must be a primary file
@@ -18,12 +28,28 @@ def price_evidence(row):
     """
     source, marker, line = row['source'].rpartition('#L')
     require(bool(marker) and line.isdigit(), 'Price gate needs a saved IBKR bar and #L locator.')
-    text = source_excerpt(dict(source=source, line_start=int(line), line_end=int(line)))
+    text = primary_line(source, int(line), cache)
     bar = json.loads(text)
     require(bar.get('provider') == 'IBKR', 'Price gate needs an IBKR response.')
     for key in ('ticker', 'date', 'close', 'adjusted_close'):
         require(bar.get(key) == row[key], 'Price gate source mismatch. ' + key)
     require(bar.get('adjustment') == 'split_only', 'Price gate needs explicit split-only adjustment.')
+    if 'broker_response' in bar:
+        payload = bar['broker_response']
+        native = payload['bars'][bar['broker_index']]
+        for key in ('ticker', 'date', 'close', 'adjusted_close', 'adjustment'):
+            require(native.get(key, payload.get(key)) == bar[key], 'Broker payload mismatch. ' + key)
+        # The original transport line remains independently readable primary evidence.
+        origin = primary_line(bar['transcript'], bar['transcript_line'], cache)
+        blocks = json.loads(origin).get('message', {}).get('content', [])
+        matched = False
+        for block in blocks:
+            if block.get('type') == 'tool_result' and block.get('tool_use_id') == bar['tool_use_id']:
+                content = block.get('content')
+                if isinstance(content, list):
+                    content = ''.join(c.get('text', '') for c in content if c.get('type') == 'text')
+                matched = (json.loads(content) if isinstance(content, str) else content) == payload
+        require(matched, 'Bar is not supported by the original broker tool result.')
     return bar
 
 
@@ -34,11 +60,22 @@ def check(db, result):
         conn.row_factory = sqlite3.Row
         prices = [dict(r) for r in conn.execute('SELECT * FROM prices')]
         sessions = [dict(r) for r in conn.execute('SELECT * FROM sessions')]
+    cache = {}
     for price in prices:
-        price_evidence(price)
+        price_evidence(price, cache)
+    for row in result.get('exclusions', []):
+        event = row['event']
+        current = ('Excluded by independent reviews' if event.get('event_review', {}).get('decision') == 'exclude' else None) or exclusion(event, result['as_of']) or eligibility_gap(event)
+        require(current == row['reason'], 'Excluded event provenance changed. ' + event['event_id'])
+        # Exclusions need primary evidence and independent review too.
+        from .review import verify_event_review
+        verify_event_review(event)
     rows = []
     for row in result['events']:
         event = row['event']
+        from .review import verify_event_review
+        verify_event_review(event)
+        require(event['event_review']['decision'] == 'include', 'Excluded review entered an eligible class.')
         require(eligibility_gap(event) is None, 'Event provenance changed. ' + event['event_id'])
         require(shares_verified(event), 'Event share evidence failed. ' + event['event_id'])
         # Source inventory completeness remains explicit, never inferred from
@@ -50,8 +87,7 @@ def check(db, result):
             decision_date('fda_action', event['action_date'], event['action_evidence'])
         else:
             raise ValueError('Strict publication date checks for this event type are not implemented.')
-        announcement = source_excerpt(event['announcement_evidence'])
-        require(event['announced_at'] in announcement, 'Announcement timestamp needs exact source support.')
+        acceptance_time(event['announced_at'], event['announcement_evidence'])
         for tag in event.get('tags', []):
             source_excerpt(tag)
         recomputed = reaction(event, prices, sessions)

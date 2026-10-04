@@ -19,8 +19,11 @@ def assemble(snapshot, paths):
         source = data['source']
         if source not in ('drugs_at_fda', 'openfda_crl', 'edgar', 'ibkr'):
             raise ValueError('Unknown collection source')
-        coverage[source] = dict(path=str(path), complete=data.get('complete', False),
-                                scope=data.get('scope', {}))
+        entry = dict(path=str(path), complete=data.get('complete', False), scope=data.get('scope', {}))
+        previous = coverage.get(source, [])
+        if not isinstance(previous, list):
+            previous = [previous]
+        coverage[source] = previous + [entry] if entry not in previous else previous
         gaps.extend(data.get('gaps', []))
         gaps.extend(data.get('coverage_gaps', []))
         if not data.get('complete'):

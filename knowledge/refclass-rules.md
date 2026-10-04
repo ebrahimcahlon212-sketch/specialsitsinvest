@@ -1,4 +1,4 @@
-# Reference class rules, version 1
+# Reference class rules, version 2
 
 Fixed on 4 October 2026, before any results were seen. Any change creates version 2, and every output records the version it used.
 
@@ -15,7 +15,7 @@ An event is an FDA approval, complete response letter, refusal to file, review e
 Approvals and rejections are always reported separately, with the count at every level.
 
 ## Prices and timing
-- Times are US Eastern, and the announcement time comes from the earliest press release or filing.
+- FDA action dates come from structured approval action or letter fields. Announcement times use the company 8-K EDGAR acceptance timestamp, converted to US Eastern. Press-release prose only flags contradictions for independent review, never establishes a date. This timing rule implements amendment 8.
 - The pre-news close is the last regular-session close before the announcement.
 - A pre-market announcement makes that day's session day one. An announcement during market hours or after the close makes the next session day one. Day two is the session after day one.
 - Returns use split-adjusted closes, and the abnormal return is the stock's return from the pre-news close minus XBI's return over the same window.

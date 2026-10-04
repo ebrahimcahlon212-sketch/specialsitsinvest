@@ -93,6 +93,8 @@ def collect(client, cik, *, since='2015-01-01', until=None, max_filings=1, max_h
         result.update(company=data['name'], current_tickers=data.get('tickers', []),
                       current_exchanges=data.get('exchanges', []))
         rows = inventory(data['filings']['recent'])
+        for i, row in enumerate(rows):
+            row['announcement_evidence'] = dict(source=origin['source'], pointer='/filings/recent', index=i)
         history = [f for f in data['filings'].get('files', [])
                    if f['filingTo'] >= since and f['filingFrom'] <= until]
         if len(history) > max_history:
@@ -104,7 +106,11 @@ def collect(client, cik, *, since='2015-01-01', until=None, max_filings=1, max_h
             try:
                 old, source = client.json('https://data.sec.gov/submissions/' + name)
                 result['responses'].append(source)
-                rows.extend(inventory(old))
+                historical = inventory(old)
+                for i, row in enumerate(historical):
+                    # Historical inventories are top-level column arrays.
+                    row['announcement_evidence'] = dict(source=source['source'], pointer='', index=i)
+                rows.extend(historical)
             except (ValueError, KeyError, TypeError, AttributeError) as exc:
                 result['gaps'].append(f'{name}. {exc}')
         chosen = {}
@@ -120,8 +126,8 @@ def collect(client, cik, *, since='2015-01-01', until=None, max_filings=1, max_h
         if len(chosen) > max_filings:
             result['gaps'].append(f'Filing bound leaves {len(chosen) - max_filings} matching 8-Ks unread.')
         for row in sorted(chosen.values(), key=lambda r: (r['filingDate'], r['accessionNumber']), reverse=True)[:max_filings]:
-            entry = dict(row, documents=[], status='pending', announced_at=None,
-                         note='Filing and acceptance dates are not verified company announcement dates.')
+            entry = dict(row, documents=[], status='pending', announced_at=row.get('acceptanceDateTime'),
+                         note='Timing uses structured 8-K acceptance; earlier press releases need contradiction review.')
             result['filings'].append(entry)
             try:
                 base = filing_base(cik, row['accessionNumber'])
