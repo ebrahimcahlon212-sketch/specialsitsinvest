@@ -24,3 +24,7 @@ These override docs/system-spec.md where they differ.
 14. The build is developed and tested on Massive's free tier, which holds two years of history. Ebrahim runs the full census after upgrading for one month, and events beyond the plan's history are reported as a gap rather than dropped silently.
 15. For events within the last five years, IBKR closes from fetch-bars provide an independent check, and any difference above one cent is flagged for review.
 16. The API key is read from settings.env as MASSIVE_API_KEY. It never appears in logs or committed files, and requests stay within the plan's rate limit, which is five calls a minute on the free tier.
+
+## Version 4, 5 October 2026
+
+17. An IBKR close is flagged for review only when it differs by more than one cent from both the Massive as-traded close and the Massive split-adjusted close. Both differences are recorded. This replaces the one-cent wording in amendment 15.

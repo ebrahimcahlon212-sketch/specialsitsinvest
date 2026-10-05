@@ -1,8 +1,23 @@
 """Conservative checks for the fields that select a deal's nested class."""
-from datetime import date
+from datetime import date, datetime, time, timedelta
 from decimal import Decimal
 import re
+from zoneinfo import ZoneInfo
 from .quality import source_excerpt, require
+
+
+def available_at_close(filing, when):
+    filed = date.fromisoformat(filing['filingDate'])
+    if filed != when:
+        return filed < when
+    accepted = filing.get('acceptanceDateTime')
+    if not accepted or 'T' not in accepted:
+        return False
+    instant = datetime.fromisoformat(accepted.replace('Z', '+00:00'))
+    eastern = ZoneInfo('America/New_York')
+    if instant.tzinfo is None:
+        instant = instant.replace(tzinfo=eastern)
+    return instant.astimezone(eastern) < datetime.combine(when, time(16), eastern)
 
 
 def verify_profile(profile, root):
@@ -12,6 +27,20 @@ def verify_profile(profile, root):
         r'\b(?:we have|the company has) no (?:FDA[- ]approved|approved|commercial) products\b|'
         r'\b(?:we have|the company has) no products (?:that (?:have been |are ))?approved for commercial sale\b|'
         r'\b(?:we do not|the company does not) have (?:any )?products (?:that (?:are |have been ))?approved for (?:commercial )?sale\b', text, re.I))
+    company = re.escape(profile.get('company') or root.name)
+    absent |= bool(re.search(
+        rf'\b(?:we have|(?:the company|{company}) has) not obtained any regulatory approvals for a product candidate\b',
+        text, re.I))
+    # Bind named products to the profile or explicit ownership in the excerpt.
+    products = [profile['drug']] if profile.get('drug') else []
+    products.extend(re.findall(
+        rf'\b(\w+) is a trademark of {company}(?: Inc\.)?\b', text, re.I))
+    for product in products:
+        subject = re.escape(product)
+        absent |= bool(re.search(
+            rf'\b{subject} (?:is not approved in any indication\b|'
+            rf'is the proposed trade name for [^.]+\.\s*It is not approved in any indication\b)',
+            text, re.I))
     if profile.get('first_product') is True:
         require(absent, 'Deal profile source does not establish first-product status.')
     elif profile.get('first_product') is False:
@@ -36,16 +65,18 @@ def verify_profile(profile, root):
         if inputs.get('announced_at'):
             require(session_dates(inputs['announced_at'], inputs['sessions'])[0] == bar['date'],
                     'Profile price is not the pre-news session.')
-        # For a prospective deal, value at the supplied as-of close. The next
-        # calendar day is the cutoff for filings available by that close.
-        from datetime import timedelta
+        # Check same-day availability against the saved SEC acceptance time.
+        # The date-only share verifier then sees only available filings.
         event = dict(inputs, announced_at=(when + timedelta(days=1)).isoformat())
         for filing in inputs['share_filings']:
             source_excerpt(filing, deal_root=root)
+        latest = verify_inventory(event, filing_available=lambda row: available_at_close(row, when))
+        event['share_filings'] = [f for f in inputs['share_filings']
+                                 if date.fromisoformat(f['filed_at']) < when
+                                 or f.get('accessionNumber') == latest['accessionNumber']]
         require(shares_verified(event), 'Profile share evidence failed.')
         require(date.fromisoformat(inputs['shares_as_of']) <= when,
                 'Profile shares postdate the valuation close.')
-        verify_inventory(event)
         from .math import positive
         positive(bar['close'])
         positive(inputs['shares'])

@@ -6,7 +6,7 @@ from .quality import require, source_excerpt
 from .collectors.edgar import inventory
 
 
-def verify(event):
+def verify(event, filing_available=None):
     documents = {}
     for evidence in event['inventory_sources']:
         # Enforce the same deal/primary-file boundary before reading JSON.
@@ -25,8 +25,9 @@ def verify(event):
     for row in rows:
         date.fromisoformat(row['filingDate'])
     when = event['announced_at'][:10]
-    prior = [r for r in rows if r['form'] in ('10-Q', '10-K', '10-Q/A', '10-K/A') and r['filingDate'] < when]
-    require(bool(prior), 'No pre-event share filing in the SEC inventory.')
+    prior = [r for r in rows if r['form'] in ('10-Q', '10-K', '10-Q/A', '10-K/A')
+             and (filing_available(r) if filing_available else r['filingDate'] < when)]
+    require(bool(prior), 'No pre-event share filing in the SEC inventory; cannot establish the latest SEC periodic filing.')
     latest = max(prior, key=lambda r: r['filingDate'])
     require(any(f.get('accessionNumber') == latest['accessionNumber']
                 and f.get('filed_at') == latest['filingDate']
@@ -36,3 +37,4 @@ def verify(event):
     for row in rows:
         require(not (event['shares_as_of'] <= row['filingDate'] <= when and '1.03' in str(row.get('items', ''))),
                 'Listing gate failed. SEC inventory contains Item 1.03.')
+    return latest

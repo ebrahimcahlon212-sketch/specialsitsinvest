@@ -260,7 +260,16 @@ def price_reviews(db, knowledge):
     if not Path(db).exists():
         return
     from .engine import report
-    result = report(db, 'all', knowledge)
+    try:
+        result = report(db, 'all', knowledge)
+    except ValueError as exc:
+        if str(exc) not in {
+                'Rules or features changed. Rebuild before reporting.',
+                'Unsupported rules version. Update the engine and its tests first.',
+                'Unsupported features version. Update the engine and its tests first.'}:
+            raise
+        yield 'Price review skipped because rules or features changed; refclass build must be rerun.'
+        return
     for row in result.get('ibkr_comparisons', []):
         if row['status'] == 'review':
             yield 'Price difference requires review. ' + json.dumps(row, sort_keys=True)
