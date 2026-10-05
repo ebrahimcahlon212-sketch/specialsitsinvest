@@ -2,8 +2,16 @@
 from datetime import date
 import json
 from pathlib import Path
-from .quality import require, source_excerpt
+from .quality import GateError, require, source_excerpt
 from .collectors.edgar import inventory
+
+
+class NoPreEventShareFilingError(GateError):
+    """The inventory has no periodic filing available before the event."""
+
+
+class MissingLatestShareFilingError(GateError):
+    """Share evidence omits the latest available periodic filing."""
 
 
 def verify(event, filing_available=None):
@@ -27,13 +35,14 @@ def verify(event, filing_available=None):
     when = event['announced_at'][:10]
     prior = [r for r in rows if r['form'] in ('10-Q', '10-K', '10-Q/A', '10-K/A')
              and (filing_available(r) if filing_available else r['filingDate'] < when)]
-    require(bool(prior), 'No pre-event share filing in the SEC inventory; cannot establish the latest SEC periodic filing.')
+    if not prior:
+        raise NoPreEventShareFilingError('No pre-event share filing in the SEC inventory; cannot establish the latest SEC periodic filing.')
     latest = max(prior, key=lambda r: r['filingDate'])
-    require(any(f.get('accessionNumber') == latest['accessionNumber']
+    if not any(f.get('accessionNumber') == latest['accessionNumber']
                 and f.get('filed_at') == latest['filingDate']
                 and f.get('source') == event['shares_source']
-                for f in event['share_filings']),
-            'Share evidence omits the latest SEC periodic filing.')
+                for f in event['share_filings']):
+        raise MissingLatestShareFilingError('Share evidence omits the latest SEC periodic filing.')
     for row in rows:
         require(not (event['shares_as_of'] <= row['filingDate'] <= when and '1.03' in str(row.get('items', ''))),
                 'Listing gate failed. SEC inventory contains Item 1.03.')

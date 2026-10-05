@@ -62,10 +62,10 @@ class ReviewFourTests(unittest.TestCase):
     def test_acceptance_timezone_and_index_and_wrong_form(self):
         self.source.write_text(json.dumps(dict(recent=dict(form=['8-K'], acceptanceDateTime=['2026-09-01T12:00:00Z']))))
         ev = dict(source=str(self.source), pointer='/recent', index=0)
-        acceptance_time('2026-09-01T08:00:00-04:00', ev)
+        acceptance_time('2026-09-01T12:00:00-04:00', ev)
         with self.assertRaises(GateError): acceptance_time('2026-09-01T09:00:00-04:00', ev)
         self.source.write_text(self.source.read_text().replace('8-K', '10-Q'))
-        with self.assertRaises(GateError): acceptance_time('2026-09-01T08:00:00-04:00', ev)
+        with self.assertRaises(GateError): acceptance_time('2026-09-01T12:00:00-04:00', ev)
 
     def test_raw_root_and_symlink_boundary(self):
         raw = ROOT / 'data/refclass/raw'

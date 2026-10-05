@@ -22,6 +22,10 @@ SOURCES = ("drugs_at_fda", "openfda_crl", "edgar", "massive")
 TYPES = ("approval", "crl", "refusal_to_file", "extension", "resubmission_accepted")
 
 
+class ConventionVersionError(ValueError):
+    """The configured or stored conventions require an engine update or rebuild."""
+
+
 def conventions(knowledge):
     result = {}
     for name in ("rules", "features"):
@@ -29,7 +33,7 @@ def conventions(knowledge):
         first = content.decode().splitlines()[0]
         version = 4 if name == "rules" else 1
         if not first.endswith(f"version {version}"):
-            raise ValueError(f"Unsupported {name} version. Update the engine and its tests first.")
+            raise ConventionVersionError(f"Unsupported {name} version. Update the engine and its tests first.")
         result[f"{name}_version"] = version
         result[f"{name}_sha256"] = hashlib.sha256(content).hexdigest()
     return result
@@ -344,7 +348,7 @@ def report(db, name, knowledge):
         connection.execute("BEGIN")
         metadata = {k: json.loads(v) for k, v in connection.execute("SELECT key,value FROM metadata")}
         if any(metadata.get(key) != value for key, value in rules.items()):
-            raise ValueError("Rules or features changed. Rebuild before reporting.")
+            raise ConventionVersionError("Rules or features changed. Rebuild before reporting.")
         stored = list(connection.execute("SELECT e.payload,r.payload,e.market_value,e.exclusion FROM events e JOIN reactions r USING(event_id)"))
     rows = [(json.loads(e), json.loads(r), cap) for e, r, cap, excluded in stored if not excluded]
     first = [row for row in rows if row[0].get("first_product") is True]

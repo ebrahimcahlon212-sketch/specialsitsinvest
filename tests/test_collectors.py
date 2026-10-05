@@ -72,7 +72,9 @@ class RealResponseTests(unittest.TestCase):
         self.assertEqual(row['accessionNumber'], '0001193125-25-258629')
         self.assertEqual([d['form'] for d in row['documents']], ['8-K', 'EX-99.1'])
         self.assertTrue(row['acceptanceDateTime'])
-        self.assertEqual(row['announced_at'], row['acceptanceDateTime'])
+        self.assertEqual(row['announced_at'],
+                         edgar.acceptance_datetime(row['acceptanceDateTime']).isoformat())
+        self.assertTrue(row['announced_at'].endswith('-04:00'))
         for doc in row['documents']:
             for signal in doc['signals']:
                 self.assertEqual(doc['text'].splitlines()[signal['line'] - 1], signal['text'])

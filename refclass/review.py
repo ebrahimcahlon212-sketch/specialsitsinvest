@@ -4,6 +4,7 @@ import hashlib
 import json
 from pathlib import Path
 from .quality import require, source_excerpt, primary_path
+from .collectors.edgar import acceptance_datetime
 
 REVIEW_ROOT = Path(__file__).resolve().parents[1] / 'data/refclass'
 
@@ -19,7 +20,8 @@ def draft(candidates):
                      company=c.get('company'), event_type=c.get('event_type'),
                      application_number=c.get('application'), action_date=c.get('action_date'),
                      action_evidence=c.get('action_evidence'),
-                     announced_at=c.get('acceptanceDateTime'),
+                     announced_at=(acceptance_datetime(c['acceptanceDateTime']).isoformat()
+                                   if c.get('acceptanceDateTime') else None),
                      announcement_evidence=c.get('announcement_evidence'),
                      source=c.get('source'), locator=c.get('locator'))
         app = c.get('application', '')
@@ -259,15 +261,10 @@ def price_reviews(db, knowledge):
     """Read the current database, so updates cannot leave a stale price queue."""
     if not Path(db).exists():
         return
-    from .engine import report
+    from .engine import ConventionVersionError, report
     try:
         result = report(db, 'all', knowledge)
-    except ValueError as exc:
-        if str(exc) not in {
-                'Rules or features changed. Rebuild before reporting.',
-                'Unsupported rules version. Update the engine and its tests first.',
-                'Unsupported features version. Update the engine and its tests first.'}:
-            raise
+    except ConventionVersionError:
         yield 'Price review skipped because rules or features changed; refclass build must be rerun.'
         return
     for row in result.get('ibkr_comparisons', []):

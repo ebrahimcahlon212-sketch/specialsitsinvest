@@ -123,6 +123,7 @@ def decision_date(kind, value=None, evidence=None):
 
 def acceptance_time(value, evidence):
     from datetime import datetime
+    from .collectors.edgar import acceptance_datetime
     require('pointer' in evidence, 'Announcement needs structured SEC acceptance evidence.')
     row = structured(evidence)
     # SEC inventories are column arrays. Evidence points at the inventory and an index.
@@ -130,8 +131,8 @@ def acceptance_time(value, evidence):
     if index is not None:
         row = {k: v[index] for k, v in row.items()}
     require(row['form'] == '8-K', 'Announcement source must be a company 8-K.')
-    parse = lambda s: datetime.fromisoformat(s.replace('Z', '+00:00'))
-    actual, expected = parse(row['acceptanceDateTime']), parse(value)
+    actual = acceptance_datetime(row['acceptanceDateTime'])
+    expected = datetime.fromisoformat(value.replace('Z', '+00:00'))
     require(actual.tzinfo is not None and expected.tzinfo is not None and actual == expected,
             'Announcement differs from SEC acceptance time.')
     return row

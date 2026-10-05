@@ -4,6 +4,7 @@ from decimal import Decimal
 import re
 from zoneinfo import ZoneInfo
 from .quality import source_excerpt, require
+from .collectors.edgar import acceptance_datetime
 
 
 def available_at_close(filing, when):
@@ -13,11 +14,9 @@ def available_at_close(filing, when):
     accepted = filing.get('acceptanceDateTime')
     if not accepted or 'T' not in accepted:
         return False
-    instant = datetime.fromisoformat(accepted.replace('Z', '+00:00'))
+    instant = acceptance_datetime(accepted)
     eastern = ZoneInfo('America/New_York')
-    if instant.tzinfo is None:
-        instant = instant.replace(tzinfo=eastern)
-    return instant.astimezone(eastern) < datetime.combine(when, time(16), eastern)
+    return instant < datetime.combine(when, time(16), eastern)
 
 
 def verify_profile(profile, root):
@@ -39,7 +38,7 @@ def verify_profile(profile, root):
         subject = re.escape(product)
         absent |= bool(re.search(
             rf'\b{subject} (?:is not approved in any indication\b|'
-            rf'is the proposed trade name for [^.]+\.\s*It is not approved in any indication\b)',
+            rf'is the proposed trade name for (?:\b(?:Inc|Ltd|Corp|Co)\.|[^.])+\.\s*It is not approved in any indication\b)',
             text, re.I))
     if profile.get('first_product') is True:
         require(absent, 'Deal profile source does not establish first-product status.')

@@ -3,7 +3,8 @@
 Keyword matches are research leads, never verified event types or action dates.
 The SEC acceptance timestamp is retained separately from company announcement time.
 """
-from datetime import date
+from datetime import date, datetime
+from zoneinfo import ZoneInfo
 import html
 import re
 from lib.prep import html_text
@@ -19,6 +20,12 @@ SIGNALS = {
     'offering': r'(?:public|registered direct|equity) offering|private placement|at.the.market',
     'approval': r'FDA.{0,80}approv|approv.{0,80}FDA',
 }
+
+
+def acceptance_datetime(value):
+    """SEC submissions encode Eastern wall time, despite their trailing Z."""
+    return datetime.fromisoformat(value.replace('Z', '+00:00')).replace(
+        tzinfo=ZoneInfo('America/New_York'))
 
 
 def cik_number(cik):
@@ -126,7 +133,9 @@ def collect(client, cik, *, since='2015-01-01', until=None, max_filings=1, max_h
         if len(chosen) > max_filings:
             result['gaps'].append(f'Filing bound leaves {len(chosen) - max_filings} matching 8-Ks unread.')
         for row in sorted(chosen.values(), key=lambda r: (r['filingDate'], r['accessionNumber']), reverse=True)[:max_filings]:
-            entry = dict(row, documents=[], status='pending', announced_at=row.get('acceptanceDateTime'),
+            accepted = row.get('acceptanceDateTime')
+            entry = dict(row, documents=[], status='pending',
+                         announced_at=acceptance_datetime(accepted).isoformat() if accepted else None,
                          note='Timing uses structured 8-K acceptance; earlier press releases need contradiction review.')
             result['filings'].append(entry)
             try:

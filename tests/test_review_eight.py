@@ -12,8 +12,12 @@ from unittest.mock import patch
 from tests import test_review_seven
 from tests.support import ROOT, bundle
 from refclass.__main__ import main
-from refclass.engine import build
-from refclass.profile import verify_profile
+from refclass.engine import build, ConventionVersionError
+from refclass.review import draft, price_reviews
+from refclass.profile import verify_profile, available_at_close
+from refclass.collectors.edgar import acceptance_datetime
+from refclass.inventory import NoPreEventShareFilingError, MissingLatestShareFilingError
+from datetime import date, time, timedelta
 from refclass.quality import GateError
 
 
@@ -46,6 +50,47 @@ class ReviewEightTests(unittest.TestCase):
                 with self.assertRaisesRegex(GateError, 'first-product'):
                     verify_profile(profile, self.deal)
 
+    def test_apple_acceptance_is_eastern_wall_time(self):
+        row = dict(form='10-Q', acceptanceDateTime='2023-08-03T18:04:43.000Z',
+                   filingDate='2023-08-04')
+        accepted = acceptance_datetime(row['acceptanceDateTime'])
+        self.assertEqual(accepted.isoformat(), '2023-08-03T18:04:43-04:00')
+        self.assertGreater(accepted.time(), time(17, 30))
+        self.assertEqual(accepted.date() + timedelta(days=1), date.fromisoformat(row['filingDate']))
+        self.assertFalse(available_at_close(row, date(2023, 8, 3)))
+        self.assertTrue(available_at_close(row, date(2023, 8, 4)))
+        self.assertEqual(acceptance_datetime('2023-01-03T18:04:43.000Z').utcoffset(),
+                         timedelta(hours=-5))
+
+    def test_review_draft_normalizes_sec_acceptance(self):
+        event = draft([dict(candidate_id='sec', acceptanceDateTime='2023-08-03T18:04:43.000Z')])[0]
+        self.assertEqual(event['announced_at'], '2023-08-03T18:04:43-04:00')
+
+    def test_price_review_catches_version_class_only(self):
+        db = self.root / 'db.sqlite'
+        db.touch()
+        with patch('refclass.engine.report', side_effect=ConventionVersionError('Changed wording')):
+            self.assertEqual(len(list(price_reviews(db, ROOT / 'knowledge'))), 1)
+        with patch('refclass.engine.report', side_effect=ValueError('Rules or features changed. Rebuild before reporting.')):
+            with self.assertRaises(ValueError):
+                list(price_reviews(db, ROOT / 'knowledge'))
+
+    def test_trade_name_description_allows_company_abbreviations(self):
+        profile = self.profile()
+        profile.pop('market_value_inputs')
+        profile['drug'] = 'MOLBREEVI'
+        for abbreviation in ('Inc.', 'Ltd.', 'Corp.', 'Co.'):
+            with self.subTest(abbreviation=abbreviation):
+                Path(profile['source']).write_text(
+                    f'MOLBREEVI is the proposed trade name for Example {abbreviation} inhalation solution. '
+                    'It is not approved in any indication.')
+                verify_profile(profile, self.deal)
+        Path(profile['source']).write_text(
+            'MOLBREEVI is the proposed trade name for inhalation solution. '
+            'OTHERDRUG is a different product. It is not approved in any indication.')
+        with self.assertRaises(GateError):
+            verify_profile(profile, self.deal)
+
     def test_same_day_share_filing_requires_acceptance_before_close(self):
         profile = self.profile()
         inputs = profile['market_value_inputs']
@@ -56,10 +101,11 @@ class ReviewEightTests(unittest.TestCase):
         recent['filingDate'] = [profile['as_of']]
         for accepted, available in (
                 ('2026-09-03T15:59:59-04:00', True),
-                ('2026-09-03T19:59:59Z', True),
+                ('2026-09-03T15:59:59.000Z', True),
                 ('2026-09-03T15:59:59', True),
                 ('2026-09-03T16:00:00-04:00', False),
-                ('2026-09-03T20:01:00Z', False),
+                ('2026-09-03T16:00:00.000Z', False),
+                ('2026-09-03T19:59:59Z', False),
                 ('2026-09-03T17:00:00-04:00', False),
                 (None, False)):
             with self.subTest(accepted=accepted):
@@ -71,7 +117,7 @@ class ReviewEightTests(unittest.TestCase):
                 if available:
                     verify_profile(copy.deepcopy(profile), self.deal)
                 else:
-                    with self.assertRaisesRegex(GateError, 'pre-event share filing'):
+                    with self.assertRaises(NoPreEventShareFilingError):
                         verify_profile(copy.deepcopy(profile), self.deal)
 
     def test_after_close_filing_does_not_displace_prior_filing(self):
@@ -88,7 +134,7 @@ class ReviewEightTests(unittest.TestCase):
             verify_profile(copy.deepcopy(profile), self.deal)
         recent['acceptanceDateTime'][1] = '2026-09-03T15:00:00-04:00'
         inventory.write_text(json.dumps(data))
-        with self.assertRaisesRegex(GateError, 'latest SEC'):
+        with self.assertRaises(MissingLatestShareFilingError):
             verify_profile(profile, self.deal)
 
     def test_bare_review_prints_disagreements_with_stale_database(self):
