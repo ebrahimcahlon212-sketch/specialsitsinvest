@@ -3,7 +3,7 @@
 Keyword matches are research leads, never verified event types or action dates.
 The SEC acceptance timestamp is retained separately from company announcement time.
 """
-from datetime import date, datetime
+from datetime import date, datetime, timezone
 from zoneinfo import ZoneInfo
 import html
 import re
@@ -23,9 +23,11 @@ SIGNALS = {
 
 
 def acceptance_datetime(value):
-    """SEC submissions encode Eastern wall time, despite their trailing Z."""
-    return datetime.fromisoformat(value.replace('Z', '+00:00')).replace(
-        tzinfo=ZoneInfo('America/New_York'))
+    """Convert UTC SEC acceptance times to Eastern, preserving explicit offsets."""
+    instant = datetime.fromisoformat(value.replace('Z', '+00:00'))
+    if instant.tzinfo is None:
+        instant = instant.replace(tzinfo=timezone.utc)
+    return instant.astimezone(ZoneInfo('America/New_York'))
 
 
 def cik_number(cik):

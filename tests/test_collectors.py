@@ -1,5 +1,6 @@
 """Real-response replay and failure cases. Tests never call a live service."""
 import copy
+from datetime import date, time, timedelta
 import io
 import json
 import os
@@ -26,6 +27,45 @@ def fixture_client():
 
 
 class RealResponseTests(unittest.TestCase):
+    def test_savara_filing_dates_match_utc_acceptance(self):
+        data, _ = fixture_client().json('https://data.sec.gov/submissions/CIK0001160308.json')
+        rows = edgar.inventory(data['filings']['recent'])
+        self.assertEqual(len(rows), 1000)
+        skipped_forms = {
+            '3', '4', '5', 'CORRESP', 'UPLOAD',
+            'SC 13D', 'SC 13G', 'SCHEDULE 13D', 'SCHEDULE 13G',
+            'EFFECT', 'CERTNAS', 'CT ORDER',
+        }
+        # The only federal closures encountered while advancing these saved
+        # acceptances to the next filing day. This is not an exchange calendar.
+        # See docs/build/round-11-notes.md for the two affected accessions.
+        closures = {date(2009, 10, 12), date(2013, 5, 27)}
+        disagreements = []
+        checked = 0
+        for row in rows:
+            if row['form'].removesuffix('/A') in skipped_forms:
+                continue
+            checked += 1
+            accepted = edgar.acceptance_datetime(row['acceptanceDateTime'])
+            same_day = accepted.date()
+            next_day = same_day + timedelta(days=1)
+            while next_day.weekday() >= 5 or next_day in closures:
+                next_day += timedelta(days=1)
+            if accepted.time() < time(17, 30):
+                allowed = {same_day}
+            elif accepted.time() <= time(17, 35):
+                # Transmission can start before 17:30 and finish afterwards.
+                allowed = {same_day, next_day}
+            else:
+                allowed = {next_day}
+            if date.fromisoformat(row['filingDate']) not in allowed:
+                disagreements.append((row['accessionNumber'], row['form'],
+                                      row['filingDate'], row['acceptanceDateTime'],
+                                      accepted.isoformat()))
+        self.assertEqual(checked, 518)
+        # Exact residual list, also recorded in docs/build/round-11-notes.md.
+        self.assertEqual(disagreements, [])
+
     def test_all_saved_responses_are_dated_and_checksums_match(self):
         client = fixture_client()
         for record in client.records:

@@ -17,7 +17,7 @@ from refclass.review import draft, price_reviews
 from refclass.profile import verify_profile, available_at_close
 from refclass.collectors.edgar import acceptance_datetime
 from refclass.inventory import NoPreEventShareFilingError, MissingLatestShareFilingError
-from datetime import date, time, timedelta
+from datetime import date, time
 from refclass.quality import GateError
 
 
@@ -50,21 +50,37 @@ class ReviewEightTests(unittest.TestCase):
                 with self.assertRaisesRegex(GateError, 'first-product'):
                     verify_profile(profile, self.deal)
 
-    def test_apple_acceptance_is_eastern_wall_time(self):
-        row = dict(form='10-Q', acceptanceDateTime='2023-08-03T18:04:43.000Z',
-                   filingDate='2023-08-04')
+    def test_savara_acceptance_is_utc(self):
+        from tests.test_collectors import fixture_client
+        from refclass.collectors.edgar import inventory
+        data, _ = fixture_client().json('https://data.sec.gov/submissions/CIK0001160308.json')
+        row, = [r for r in inventory(data['filings']['recent'])
+                if r['accessionNumber'] == '0001193125-26-344585']
+        self.assertEqual(row['form'], '10-Q')
+        self.assertEqual(row['filingDate'], '2026-08-11')
+        self.assertEqual(row['acceptanceDateTime'], '2026-08-11T20:05:48.000Z')
         accepted = acceptance_datetime(row['acceptanceDateTime'])
-        self.assertEqual(accepted.isoformat(), '2023-08-03T18:04:43-04:00')
-        self.assertGreater(accepted.time(), time(17, 30))
-        self.assertEqual(accepted.date() + timedelta(days=1), date.fromisoformat(row['filingDate']))
-        self.assertFalse(available_at_close(row, date(2023, 8, 3)))
-        self.assertTrue(available_at_close(row, date(2023, 8, 4)))
-        self.assertEqual(acceptance_datetime('2023-01-03T18:04:43.000Z').utcoffset(),
-                         timedelta(hours=-5))
+        self.assertEqual(accepted.isoformat(), '2026-08-11T16:05:48-04:00')
+        self.assertGreater(accepted.time(), time(16))
+        self.assertLess(accepted.time(), time(17, 30))
+        self.assertEqual(accepted.date(), date.fromisoformat(row['filingDate']))
+        self.assertFalse(available_at_close(row, date(2026, 8, 11)))
+        self.assertTrue(available_at_close(row, date(2026, 8, 12)))
+
+    def test_acceptance_offsets_and_naive_utc(self):
+        for value, expected in (
+                ('2023-01-03T18:04:43.000Z', '2023-01-03T13:04:43-05:00'),
+                ('2026-09-03T19:59:59', '2026-09-03T15:59:59-04:00'),
+                ('2026-09-03T19:59:59+00:00', '2026-09-03T15:59:59-04:00'),
+                ('2026-09-03T15:59:59-04:00', '2026-09-03T15:59:59-04:00'),
+                ('2026-09-03T21:59:59+02:00', '2026-09-03T15:59:59-04:00'),
+                ('2026-09-04T01:00:00Z', '2026-09-03T21:00:00-04:00')):
+            with self.subTest(value=value):
+                self.assertEqual(acceptance_datetime(value).isoformat(), expected)
 
     def test_review_draft_normalizes_sec_acceptance(self):
         event = draft([dict(candidate_id='sec', acceptanceDateTime='2023-08-03T18:04:43.000Z')])[0]
-        self.assertEqual(event['announced_at'], '2023-08-03T18:04:43-04:00')
+        self.assertEqual(event['announced_at'], '2023-08-03T14:04:43-04:00')
 
     def test_price_review_catches_version_class_only(self):
         db = self.root / 'db.sqlite'
@@ -101,11 +117,11 @@ class ReviewEightTests(unittest.TestCase):
         recent['filingDate'] = [profile['as_of']]
         for accepted, available in (
                 ('2026-09-03T15:59:59-04:00', True),
-                ('2026-09-03T15:59:59.000Z', True),
-                ('2026-09-03T15:59:59', True),
+                ('2026-09-03T19:59:59Z', True),
+                ('2026-09-03T19:59:59', True),
                 ('2026-09-03T16:00:00-04:00', False),
-                ('2026-09-03T16:00:00.000Z', False),
-                ('2026-09-03T19:59:59Z', False),
+                ('2026-09-03T20:00:00Z', False),
+                ('2026-09-03T20:00:00', False),
                 ('2026-09-03T17:00:00-04:00', False),
                 (None, False)):
             with self.subTest(accepted=accepted):
