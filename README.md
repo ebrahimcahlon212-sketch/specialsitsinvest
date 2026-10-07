@@ -1,103 +1,62 @@
-# filing-date-rag
+# Special situations research kit
 
-Point-in-time cocoa and sugar research prototype with source-linked retrieval and offline evaluation.
+A personal research system I use to find and analyse event-driven investments, mainly UK and US situations with a dated outcome such as takeovers, tender offers, wind-downs, spin-offs and FDA decisions. It reads filings and regulatory announcements, drafts a report for each situation, has other models check the draft against the source documents, and keeps a log of predictions made before the outcome is known.
 
-I built this after noticing how easily research Q&A tools answer with information that was not public at the date being asked about. This prototype refuses to do that: ask a cocoa or sugar question at a chosen UTC cutoff and it retrieves only eligible evidence, showing where each passage came from. It builds on the public cocoa positioning and sugar USDA-vintage studies without changing either research protocol.
+I built it because I invest a small ISA and wanted a process where every number in a write-up traces back to a document I can open. My degree is in bioprocessing, so the FDA side pays particular attention to manufacturing, which is where many rejections actually come from.
 
-The local evidence browser works without an API key. An optional OpenAI agent adds three tools: evidence search, a DuckDB evidence lookup, and a calculator grounded in retrieved numbers.
+## What a run looks like
 
-## What is here
+`./run.sh find` scans the day's SEC filings and UK announcements, including the Takeover Panel's offer list and notices of tenders, liquidations, returns of capital and demergers. Each candidate gets a short card with the terms, key dates, how the money is made and what to watch out for, plus a score from 1 to 5. The score is a reading order, not a verdict.
 
-- 28 logical vintage/snapshot extracts and 92 citable passages from 34 preserved input files.
-- ICCO balances, regional cocoa grindings, U.S./Mexico USDA sugar vintages, and compact cocoa and Sugar No. 11 positioning snapshots. Complete imported CSV histories remain on disk.
-- BM25 retrieval, with an opt-in OpenAI embedding adapter and reciprocal-rank fusion.
-- A local FastAPI backend, Streamlit interface and downloadable JSON research records.
-- Deterministic corpus checks, 74 passing offline tests, Ruff and strict Mypy checks.
-- 37 authored offline evaluation cases. Expected evidence appeared in the top six for all 18 answerable cases, but ranked first in only 14. All 12 metadata-boundary cases passed.
+A recent card, trimmed:
 
-The corpus is a set of research extracts, sized for audit rather than volume. Citations name exact CSV records or sections, and none invents a PDF page. Source URLs, extract hashes, upstream hashes where available, capture times and publication uncertainty remain attached.
+> **Tribal Group plc, UK liquidation.** Tribal has published a circular for a subsidiary sale followed by a proposed cash liquidation. The board estimates at least 105p per share, with an initial distribution expected in Q1 2027 and a final one in Q2 2027. Unexpected claims, taxes or costs could reduce distributions. Score 4 of 5.
 
-## Run locally
+Promoting a card creates a deal folder with the documents and starts the research. One model drafts the report and two others review it independently. A final step then re-reads every disputed point in the source before deciding, and the report records each disagreement and how it was settled. Prices come from a read-only IBKR connection, and a Python calculator works out the returns, so no model ever does the arithmetic.
 
-Tested on Windows x64 with Python 3.12.14. Other platforms are not yet verified.
+## Rules the code enforces
 
-```
-python -m venv .venv
-.\.venv\Scripts\python.exe -m pip install -r requirements-lock.txt
-.\.venv\Scripts\python.exe -m pip install --no-deps --no-build-isolation -e .
-powershell -NoProfile -File scripts/start.ps1
-```
+- **Code computes, models read.** Python does every calculation. Models read documents and make labelled judgements.
+- **Sources for every number.** Reports cite the document and line behind each figure. A ledger that gives every fact a single home is planned for the next phase.
+- **Rules before results.** The filters for the FDA reference classes were fixed in writing before any results were seen.
+- **Agreement is not proof.** When reviewers agree, the check still goes back to the primary document.
+- **Predictions before outcomes.** Every call is logged with a probability and a date, then settled and scored.
 
-On a prepared installation, double-click `Start Research.cmd`. It starts local services and opens http://127.0.0.1:8511. `Stop Research.cmd` stops the process trees rooted at the launcher's verified process IDs and creation times. Logs stay in the ignored `logs/` folder.
+## The FDA reference-class engine
 
-For manual startup, use separate terminals:
+The newest part, still in development, builds a database of FDA approvals and rejections since 2015 with the share price reaction to each. Daily prices come from Massive in both as-traded and split-adjusted form, with IBKR as a cross-check. The aim is to replace hand-picked comparables with a proper sample, so a deep dive can say how shares in similar situations actually moved on approval or rejection.
 
-```
-.\.venv\Scripts\python.exe scripts/run_api.py
-.\.venv\Scripts\python.exe -m streamlit run app.py
-```
+Phase 1 code is complete with 142 tests passing. It counts as accepted only once a live run reproduces the comparables from my Savara analysis.
 
-The API defaults to port 8011 and accepts `PORT`; the UI reads the same environment variable. Keep both bound to loopback. There is no authentication layer, so please do not expose it publicly.
+## One bug worth describing
 
-## Try the date distinction
+During the build, a model reviewer stated that EDGAR's acceptance timestamps are US Eastern time despite ending in Z, and the claim went into the code. A check against 539 saved filings showed the opposite. Read as UTC, 521 filing dates fit EDGAR's 5:30pm cut-off, against 196 under the Eastern reading. The change was reverted, and a regression test now runs over the saved filings. It is the clearest example of why agreement between models is not treated as proof.
 
-Ask: **What was the latest ICCO cocoa surplus estimate for 2024/25, and how had it changed?**
+## Commands
+./run.sh find # daily sweep
+./run.sh promote ID name # turn a card into a deal folder
+./run.sh name # research a deal
+./run.sh name check # re-check the report against its sources
+./run.sh name view # open the report
+./run.sh name biotech # FDA deep dive
+./run.sh new name # start a deal yourself
+./run.sh track name TICKER # attach a company to it
+./run.sh predict # log a dated prediction
+./run.sh settle # score it once the outcome is known
+./run.sh refclass build # build the FDA reference-class database
 
-At `2026-06-01T00:00:00Z`, public-as-of retrieval can surface the retained May estimate of 48 kt and the preceding estimate of 75 kt, a difference of -27 kt. The answer evidence lives in the retrieved records; this section only summarises what they contain. The published balance is calculated differently from gross production minus grindings.
+Full details are in `docs/manual.md`, and the design is in `docs/system-spec.md`.
 
-Switch the same question to captured-as-of. The inherited studies captured these sources in August, so strict replay cannot use them in June. That difference is the point of the app.
+## How it was built
 
-| Mode | Eligibility |
-| --- | --- |
-| Published by then | Source-vintage public availability is at or before the cutoff |
-| Captured by then | Public availability and inherited source-study capture are both at or before it |
-| Current snapshot, either mode | Capture must also precede the cutoff; current CFTC values are never backdated |
+I wrote the specifications and reviewed every build round. Most of the code was written by OpenAI's Codex and reviewed by Claude. Each round's task and review is saved in `docs/build`, so the full record of what was asked for and what the reviews found is there to read.
 
-Public mode is a retrospective reconstruction from later-captured extracts. Strict mode uses the inherited study's capture time; I am not claiming this app existed at that time. Neither mode implies the corpus covers everything the market knew.
+The earlier commits in this repository hold my first attempt, a Windows desktop app for researching US spin-offs, which this kit replaced.
 
-## Optional live AI
+## Setup
 
-Keep a key in `.env.local` as `OPENAI_API_KEY=...`; never put it in the browser or commit it. Set `RAG_ENABLE_LIVE=true`, or start with `scripts/start.ps1 -LiveAi`. The UI still defaults to evidence-only mode, and selecting AI answer or vector search incurs API usage only on submit. One thing I learned the hard way: a ChatGPT subscription does not come with API credit.
+The kit runs on Linux or WSL with Python 3. Copy `settings.example.env` to `settings.env` and add your own keys, which stay out of git. Prices need a read-only IBKR connection, and the research steps call Claude, Codex and Kimi, as described in the manual.
 
-The live smoke attempt on 4 September 2026 reached the API but received HTTP 429. No live answer or vector-quality result was produced, and the cause was not resolved beyond an account or rate-limit response. The retained output is at `evals/results/live-smoke-20260904-attempt2.json`. Treat the live path as untested until a successful run exists.
+## Status
 
-```
-python scripts/live_smoke.py --confirm-api-cost --hybrid --output evals/results/local-new-run.json
-```
-
-This runs a bounded revision question, a strict-replay abstention and a future-override question through the actual service. Each run requires a new output path. It is a smoke check, nothing more.
-
-## Verification
-
-```
-python -m pytest -q
-python -m ruff check .
-python -m ruff format --check .
-python -m mypy
-python scripts/build_corpus.py --check
-python scripts/evaluate.py --check
-```
-
-Tests prohibit network requests, including to local HTTP services. On Windows, only asyncio's internal socket-pair construction is allowed as local IPC. CI installs dependencies first, then runs the offline checks without secrets. The corpus rebuild does not need the sibling repos. The publication-exclusion tests require Git and use a fresh temporary repository to verify that credentials, runtime logs and test scratch files stay ignored while public inputs remain usable.
-
-The evaluation report records misses alongside hits, and keyword matches on unsupported questions never count as successful refusals. Semantic faithfulness, citation precision, live-model refusal quality and dense retrieval quality remain **NOT EVALUATED**.
-
-## Boundaries
-
-Date filtering runs before BM25 statistics, embedding and DuckDB registration, so the model cannot move the cutoff. Output checks require retrieved IDs, eligible sources, exact excerpts and numeric-token presence. If the model writes limitation prose it cannot cite, that prose is discarded. Calculations use Python Decimal and retain both operand citations.
-
-These checks do not establish entailment, relevance, compatible units, causality or prediction. The model can still misread an eligible passage. Number words and units need human review, and retrieval confidence is not calibrated. Evidence-only mode returns passages rather than an answer. Conflicts are model-flagged; there is no independently validated conflict detector yet.
-
-DuckDB currently filters cited passages only, and the complete typed positioning histories are outside its scope for now. Cross-encoders, company-filing ingestion, full-paper scientific review and a PDF-page corpus are all future work. The repo has no live trading feed, no private or licensed datasets, no fine-tuning, no multimodal analysis and no broker connection, and it makes no return-prediction claim.
-
-The single-agent run has turn and tool budgets plus a timeout. Embedding cancellation stops new batches but cannot retract a request already sent to the provider. Tracing and response storage are disabled in requests; provider handling is governed by the account's API data policies.
-
-## Next work
-
-Add a small permitted original-document corpus with verified page/section locators, a tested typed CSV-history adapter, a real reranker, and a separately reviewed held-out answer eval. Then measure the live pipeline before considering public hosting.
-
-See source boundaries, dependency reasons, agent prompt, and AI usage. Publishing the source does not deploy the app: it still runs locally, with no public hosted service.
-
-## Publication history
-
-This repository publishes an existing local prototype in topic-based commits: setup, source data, retrieval controls, the application, and tests/evaluation. The commits are publication stages rather than a reconstruction of the development timeline, and their timestamps record the publication work itself. The imported studies retain their own source dates, capture times and commit references.
+This is a personal tool shared to show how it works, not a product, and nothing in it is investment advice. Known gaps include CBER decisions missing from the openFDA data, and companies added by hand not yet getting automatic UK documents or prices.
