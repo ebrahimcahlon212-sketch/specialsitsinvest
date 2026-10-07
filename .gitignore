@@ -31,3 +31,5 @@ data/refclass*.sqlite*
 
 data/refclass/active-reviews.json
 data/refclass/.reviews.lock
+*.swp
+.*.swp
